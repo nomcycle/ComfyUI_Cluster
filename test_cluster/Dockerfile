@@ -46,14 +46,15 @@ RUN useradd -m -s /bin/bash comfy && \
     chmod 700 /home/comfy/.ssh && \
     mkdir -p /home/comfy/startup
 
-COPY ./ /workspace/custom_nodes/
-RUN ls /workspace/custom_nodes/ && sleep 2
+COPY ./ /tmp/custom_nodes/
+RUN ls /tmp/custom_nodes/ && sleep 2
+
+RUN chown -R comfy:comfy /workspace
+
+VOLUME /workspace
+
 COPY ./ComfyUI_Cluster/test_cluster/container/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
-
-# Setup workspace permissions
-VOLUME /workpace
-RUN chown -R comfy:comfy /workspace
 
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["bash"]

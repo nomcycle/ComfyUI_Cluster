@@ -1,4 +1,4 @@
-from listener import UDPListener
+from .listener import UDPListener
 from .protobuf.messages_pb2 import FenceRequest, FenceResponse
 
 class ClusterNode:

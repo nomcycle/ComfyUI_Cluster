@@ -1,6 +1,6 @@
 from .protobuf.messages_pb2 import FenceRequest, FenceResponse
 
-from cluster_node import ClusterNode
+from .cluster_node import ClusterNode
 
 class SyncedNode:
     instance_count = 0
