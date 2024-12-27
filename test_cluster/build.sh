@@ -1,0 +1,1 @@
+sudo docker build -f ./Dockerfile ../../ -t comfyui-cluster
