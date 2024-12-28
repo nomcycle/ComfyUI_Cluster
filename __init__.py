@@ -1,13 +1,14 @@
-from .cluster_node import ClusterNode, InstanceNode
+from .cluster_node import ClusterNode, create_cluster_instance_node
+from .protobuf.messages_pb2 import ClusterRole
 
 class SyncedNode:
 
-    instance_count = 0
-    node: InstanceNode = ClusterNode.get_instance()
+    node_count = 0
+    node: ClusterNode = create_cluster_instance_node()
 
     def __init__(self):
-        SyncedNode.instance_count += 1
-        self._instance_id = SyncedNode.instance_count
+        SyncedNode.node_count += 1
+        self._node_instance_id = SyncedNode.node_count
 
 class FenceClusteredWorkflow(SyncedNode):
     def __init__(self):

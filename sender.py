@@ -13,6 +13,7 @@ class UDPSender:
 
     def send(self, message):
         try:
+
             broadcast_addr = '255.255.255.255'
             msg_json = MessageToJson(message)
             logger.info(f"Broadcasting message to {broadcast_addr}:{self.port}:\n{msg_json}")

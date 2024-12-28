@@ -1,29 +1,54 @@
 syntax = "proto3";
 
+enum ClusterRole {
+    UNSET = 0;
+    LEADER = 1;
+    FOLLOWER = 2;
+}
+
+enum ClusterState {
+    POPULATING = 0;
+    IDLE = 1;
+    EXECUTING = 2;
+    ERROR = 3;
+}
+
 enum ClusterMessageType {
     UNKNOWN = 0;
-    SIGNAL_HOT_RELOAD = 1;
-    ANNOUNCE = 2;
-    FENCE_REQUEST = 3;
-    FENCE_RESPONSE = 4;
+    ACK = 1;
+    SIGNAL_HOT_RELOAD = 2;
+    ANNOUNCE = 3;
+    FENCE_REQUEST = 4;
+    FENCE_RESPONSE = 5;
+}
+
+message ClusterAck {
+    ClusterMessageType type = 1;
+    int32 message_id = 2;
+    int32 ack_message_id = 3;
 }
 
 message ClusterSignalHotReload {
     ClusterMessageType type = 1;
-    string timestamp = 2;
+    int32 message_id = 2;
+    string timestamp = 3;
 }
 
 message ClusterFenceRequest {
     ClusterMessageType type = 1;
-    int32 node_id = 2;
+    int32 message_id = 2;
+    int32 node_id = 3;
 }
 
 message ClusterFenceResponse {
     ClusterMessageType type = 1;
-    int32 node_id = 2;
+    int32 message_id = 2;
+    int32 node_id = 3;
 }
 
 message ClusterAnnounceInstance {
     ClusterMessageType type = 1;
-    string instance_id = 2;
+    int32 message_id = 2;
+    string instance_id = 3;
+    ClusterRole role = 4; 
 }
