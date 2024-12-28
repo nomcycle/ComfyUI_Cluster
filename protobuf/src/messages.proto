@@ -1,9 +1,29 @@
 syntax = "proto3";
 
-message FenceRequest {
-    int32 node_id = 1;
+enum ClusterMessageType {
+    UNKNOWN = 0;
+    SIGNAL_HOT_RELOAD = 1;
+    ANNOUNCE = 2;
+    FENCE_REQUEST = 3;
+    FENCE_RESPONSE = 4;
 }
 
-message FenceResponse {
-    int32 node_id = 1;
+message ClusterSignalHotReload {
+    ClusterMessageType type = 1;
+    string timestamp = 2;
+}
+
+message ClusterFenceRequest {
+    ClusterMessageType type = 1;
+    int32 node_id = 2;
+}
+
+message ClusterFenceResponse {
+    ClusterMessageType type = 1;
+    int32 node_id = 2;
+}
+
+message ClusterAnnounceInstance {
+    ClusterMessageType type = 1;
+    string instance_id = 2;
 }

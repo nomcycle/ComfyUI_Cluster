@@ -1,5 +1,15 @@
 #!/bin/bash
 
+# Parse command line arguments
+SKIP_SETUP=false
+while [[ "$#" -gt 0 ]]; do
+    case $1 in
+        --skip_setup) SKIP_SETUP=true ;;
+        *) echo "Unknown parameter: $1"; exit 1 ;;
+    esac
+    shift
+done
+
 # Generate SSH key if it doesn't exist
 SSH_KEY="$HOME/.ssh/comfyui-cluster"
 if [ ! -f "$SSH_KEY" ]; then
@@ -14,6 +24,12 @@ LEADER_PORT=8189
 LEADER_NAME="comfyui-cluster-leader"
 FOLLOWER_COUNT=1
 FOLLOWER_BASE_PORT=8190
+UDP_PORT=9988
+
+NETWORK_NAME="comfyui-cluster-net"
+if ! sudo docker network inspect $NETWORK_NAME >/dev/null 2>&1; then
+    sudo docker network create $NETWORK_NAME
+fi
 
 # Helper function to get container IP
 get_container_ip() {
@@ -29,9 +45,11 @@ done
 # Start leader container
 sudo docker run -d --rm \
     --name "$LEADER_NAME" \
+    --network $NETWORK_NAME \
     -p ${LEADER_PORT}:${LEADER_PORT} \
     -e COMFY_CLUSTER_SSH_PUBKEY="$PUBKEY" \
     -e COMFY_CLUSTER_PORT=${LEADER_PORT} \
+    -e COMFY_CLUSTER_SKIP_SETUP=${SKIP_SETUP} \
     -v "$VOLUME:/workspace" \
     comfyui-cluster
 
@@ -42,9 +60,15 @@ for i in $(seq 0 $((FOLLOWER_COUNT-1))); do
     
     sudo docker run -d --rm \
         --name "$container_name" \
+        --network $NETWORK_NAME \
         -p ${port}:${port} \
         -e COMFY_CLUSTER_SSH_PUBKEY="$PUBKEY" \
         -e COMFY_CLUSTER_PORT=${port} \
+        -e COMFY_CLUSTER_SKIP_SETUP=${SKIP_SETUP} \
         -v "$VOLUME:/workspace" \
         comfyui-cluster
 done
+
+HOME_DIR="$HOME"
+sudo rm -rf "$HOME_DIR/comfyui-cluster-volume/ComfyUI/custom_nodes/ComfyUI_Cluster/"
+sudo cp -rf ../../ComfyUI_Cluster "$HOME_DIR/comfyui-cluster-volume/ComfyUI/custom_nodes/"

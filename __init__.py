@@ -1,9 +1,9 @@
-from .protobuf.messages_pb2 import FenceRequest, FenceResponse
-
-from .cluster_node import ClusterNode
+from .cluster_node import ClusterNode, InstanceNode
 
 class SyncedNode:
+
     instance_count = 0
+    node: InstanceNode = ClusterNode.get_instance()
 
     def __init__(self):
         SyncedNode.instance_count += 1
