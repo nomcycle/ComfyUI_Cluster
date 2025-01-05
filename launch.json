@@ -1,0 +1,50 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Cluster LEADER",
+            "type": "python",
+            "request": "launch",
+            "program": "main.py",
+            "console": "integratedTerminal",
+            "args": [
+                "--listen",
+                "0.0.0.0",
+                "--port",
+                "8189"
+            ],
+            "env": {
+                "COMFY_CLUSTER_UDP_BROADCAST": "true",
+                "COMFY_CLUSTER_INSTANCE_COUNT": "2",
+                "COMFY_CLUSTER_ROLE": "LEADER",
+                "COMFY_CLUSTER_SINGLE_HOST": "true",
+                "COMFY_CLUSTER_LISTEN_PORT": "9997",
+                "COMFY_CLUSTER_SEND_PORT": "9998"
+            }
+        }
+        {
+            "name": "Cluster FOLLOWER",
+            "type": "python",
+            "request": "launch",
+            "program": "main.py",
+            "console": "integratedTerminal",
+            "args": [
+                "--listen",
+                "0.0.0.0",
+                "--port",
+                "8190"
+            ],
+            "env": {
+                "COMFY_CLUSTER_UDP_BROADCAST": "true",
+                "COMFY_CLUSTER_INSTANCE_COUNT": "2",
+                "COMFY_CLUSTER_ROLE": "FOLLOWER",
+                "COMFY_CLUSTER_SINGLE_HOST": "true",
+                "COMFY_CLUSTER_LISTEN_PORT": "9998",
+                "COMFY_CLUSTER_SEND_PORT": "9997"
+            }
+        }
+    ],
+}
