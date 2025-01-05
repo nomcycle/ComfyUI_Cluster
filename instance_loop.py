@@ -1,29 +1,15 @@
 import asyncio
-from typing import Dict
 import uuid
-import socket
-import ipaddress
 import threading
-import time
-import os
-import traceback
 
 from .log import logger
 from .udp import UDP
 from .env_vars import EnvVars
-from google.protobuf.json_format import ParseDict
-from .protobuf.messages_pb2 import (
-    ClusterRole, ClusterState, ClusterMessageType,
-    ClusterMessageHeader, ClusterAck, ClusterSignalHotReload,
-    ClusterAnnounceInstance, ClusterFenceRequest, ClusterFenceResponse,
-    ClusterSignalIdle
-)
+
+from .protobuf.messages_pb2 import ClusterRole
 
 from .cluster import Cluster
-from .instance import Instance, LeaderInstance, FollowerInstance
-
-global hot_reload_iteration
-hot_reload_iteration = 0
+from .instance import ThisInstance, ThisLeaderInstance, ThisFollowerInstance
 
 class InstanceLoop:
     _instance = None
@@ -37,13 +23,21 @@ class InstanceLoop:
         logger.info("Instance initialized with ID: %s", self._instance_id)
 
         self._cluster: Cluster = None
-        self._this_instance: Instance = None
+        self._this_instance: ThisInstance = None
 
         self._running = True
         self._state_loop = None
         self._state_lock = threading.Lock()
         self._state_thread = threading.Thread(target=self._run_state_loop, daemon=True)
         self._state_thread.start()
+
+    def _on_hot_reload(self):
+        logger.info("Cleaning up...")
+        self._running = False
+        self._this_instance.cluster.udp.cancel_all_pending()
+        del self._this_instance.cluster.udp
+        del self._this_instance.cluster
+        del self._this_instance
 
     def _run_state_loop(self):
         try:
@@ -53,9 +47,9 @@ class InstanceLoop:
             udp: UDP = UDP(self._handle_message, self._state_loop, self._instance_id)
             self._cluster = Cluster(udp)
             if self._instance_role == ClusterRole.LEADER:
-                self._this_instance = LeaderInstance(self._cluster, self._instance_id, 'localhost', ClusterRole.LEADER)
+                self._this_instance = ThisLeaderInstance(self._cluster, self._instance_id, 'localhost', ClusterRole.LEADER, self._on_hot_reload)
             else:
-                self._this_instance = FollowerInstance(self._cluster, self._instance_id, 'localhost', ClusterRole.FOLLOWER)
+                self._this_instance = ThisFollowerInstance(self._cluster, self._instance_id, 'localhost', ClusterRole.FOLLOWER, self._on_hot_reload)
             self._state_loop.run_until_complete(self._state_loop_async())
         finally:
             self._state_loop.close()
@@ -68,7 +62,12 @@ class InstanceLoop:
             logger.error("State loop failed: %s", str(e), exc_info=True)
             raise
 
+        logger.info("Exited state loop.")
+
     def _handle_message(self, msg_type_str: str, message, addr: str):
+        if not self._running:
+            return
+
         try:
             self._this_instance.handle_message(msg_type_str, message, addr)
         except Exception as e:

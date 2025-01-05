@@ -1,12 +1,4 @@
-import asyncio
 from typing import Dict
-import uuid
-import socket
-import ipaddress
-import threading
-import time
-import os
-import traceback
 
 from .log import logger
 from .udp import UDP
@@ -21,7 +13,7 @@ class Cluster:
             udp.set_cluster_instance_addresses(self._expected_instances)
 
         self.expected_instances: [str] = []
-        self.instances: Dict[str, 'Instance'] = {}  # Fixed type hint
+        self.instances: Dict[str, 'OtherInstance'] = {}  # Fixed type hint
         self.instance_count: int = EnvVars.get_instance_count()
         logger.info('Expected instance count: %d', self.instance_count)
 

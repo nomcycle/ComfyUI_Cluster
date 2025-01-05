@@ -14,27 +14,30 @@ class QueuedMessage:
         self.message = message
         self.addr: str = addr
 
-class Instance:
-    def __init__(self, cluster: Cluster, instance_id: str, address: str, role: int):
+class OtherInstance:
+    def __init__(self, instance_id: str, address: str, role: int):
+        self.all_accounted_for: bool = False
+        self.instance_id: str = instance_id
+        self.address: str = address
+        self.role: int = role
+
+class ThisInstance:
+    def __init__(self, cluster: Cluster, instance_id: str, address: str, role: int, on_hot_reload):
         self.cluster = cluster
         self.all_accounted_for: bool = False
         self.instance_id: str = instance_id
         self.address: str = address
         self.role: int = role
         self._msg_queue = queue.Queue()
-        if self.role == ClusterRole.LEADER:
-            self._current_state = ClusterState.INITIALIZE
-            from .states.signal_hot_reload_state import SignalHotReloadStateHandler
-            self._signal_hot_reload_state_handler = SignalHotReloadStateHandler(self) 
-            self._current_state_handler = self._signal_hot_reload_state_handler
-        else:
-            self._current_state = ClusterState.POPULATING
-            from .states.announce_state_handler import AnnounceInstanceStateHandler
-            self._current_state_handler = AnnounceInstanceStateHandler(self)
+        from .states.signal_hot_reload_state import SignalHotReloadStateHandler
+        self._signal_hot_reload_state_handler = SignalHotReloadStateHandler(self, on_hot_reload)
+        self._current_state = ClusterState.INITIALIZE
+        self._current_state_handler = self._signal_hot_reload_state_handler
 
     async def tick_state(self):
         if not self._current_state_handler.check_current_state(self._current_state):
             return
+
         state_result: StateResult = await self._current_state_handler.handle_state(self._current_state)
         self.handle_state_result(state_result)
 
@@ -49,9 +52,8 @@ class Instance:
 
     def handle_message(self, msg_type_str: str, message, addr: str):
         msg_type = ClusterMessageType.Value(msg_type_str)
-        if self.role == ClusterRole.FOLLOWER and msg_type == ClusterMessageType.SIGNAL_HOT_RELOAD:
-            state_result = self._signal_hot_reload_state_handler.handle_message(self._current_state, message, addr)
-            self.handle_state_result(state_result)
+        if msg_type == ClusterMessageType.SIGNAL_HOT_RELOAD:
+            self._signal_hot_reload_state_handler.handle_message(self._current_state, message, addr)
             return
 
         if not self._current_state_handler.check_message_type(msg_type):
@@ -60,10 +62,18 @@ class Instance:
         state_result = self._current_state_handler.handle_message(self._current_state, message, addr)
         self.handle_state_result(state_result)
 
-class LeaderInstance(Instance):
-    def __init__(self, cluster: Cluster, instance_id: str, address: str, role: int):
-        super().__init__(cluster, instance_id, address, role)
+class ThisLeaderInstance(ThisInstance):
+    def __init__(self, cluster: Cluster, instance_id: str, address: str, role: int, on_hot_reload):
+        super().__init__(cluster, instance_id, address, role, on_hot_reload)
 
-class FollowerInstance(Instance):
-    def __init__(self, cluster: Cluster, instance_id: str, address: str, role: int):
-        super().__init__(cluster, instance_id, address, role)
+class ThisFollowerInstance(ThisInstance):
+    def __init__(self, cluster: Cluster, instance_id: str, address: str, role: int, on_hot_reload):
+        super().__init__(cluster, instance_id, address, role, on_hot_reload)
+
+class OtherLeaderInstance(OtherInstance):
+    def __init__(self, instance_id: str, address: str, role: int):
+        super().__init__(instance_id, address, role)
+
+class OtherFollowerInstance(OtherInstance):
+    def __init__(self, instance_id: str, address: str, role: int):
+        super().__init__(instance_id, address, role)

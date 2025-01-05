@@ -7,13 +7,13 @@ from .env_vars import EnvVars
 
 class UDPListener:
     def __init__(self, host: str, port: int, message_callback):
-        self.host = host
-        self.port = port
+        self._host = host
+        self._port = port
         self.message_callback = message_callback
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.sock.bind((self.host, self.port))
+        self.sock.bind((self._host, self._port))
         self._local_ips: [str] = None
         logger.debug("UDP listener bound to %s:%d", host, port)
 
@@ -29,8 +29,8 @@ class UDPListener:
         sender_addr = addr[0]
 
         message = json.loads(data.decode())
-
         header = message.get('header', None)
+
         if not header:
             raise ValueError("Missing message header")
         if EnvVars.get_single_host():
@@ -43,7 +43,7 @@ class UDPListener:
         if not EnvVars.get_single_host() and sender_addr in self.get_cached_local_addreses():
             return
 
-        logger.debug("(RECEIVED) UDP message from %s:\n%s", sender_addr, json.dumps(message, indent=2))
+        logger.debug("(RECEIVED) UDP message from %s:%s\n%s", sender_addr, self._port, json.dumps(message, indent=2))
         
         if self.message_callback:
             self.message_callback(header, message, sender_addr)

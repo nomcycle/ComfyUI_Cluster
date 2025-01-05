@@ -12,11 +12,12 @@ from .state_handler import StateHandler
 from .state_result import StateResult
 from .announce_state_handler import AnnounceInstanceStateHandler
 
-from ..instance import Instance
+from ..instance import ThisInstance
 
 class SignalHotReloadStateHandler(StateHandler):
-    def __init__(self, instance: Instance):
+    def __init__(self, instance: ThisInstance, on_hot_reload):
         self._hot_reload_timestamp = time.time()
+        self._on_hot_reload = on_hot_reload
         super().__init__(instance, ClusterState.INITIALIZE, ClusterMessageType.SIGNAL_HOT_RELOAD)
 
     async def handle_state(self, current_state: int) -> StateResult:
@@ -37,6 +38,5 @@ class SignalHotReloadStateHandler(StateHandler):
         
         if timestamp > self._hot_reload_timestamp + 5:
             logger.info("Hot reload triggered - shutting down instance")
-            del self._instance.cluster.udp
-            del self._instance.cluster
-            del self._instance
+            if self._on_hot_reload:
+                self._on_hot_reload()

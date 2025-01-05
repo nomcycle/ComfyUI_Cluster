@@ -96,6 +96,7 @@ class UDP:
             except Exception as e:
                 logger.error("Receive loop error: %s\n%s", e, traceback.format_exc())
             time.sleep(0.01)
+        logger.info("Exited receive loop.")
     
     def _send_and_retry_loop(self):
         logger.info("Starting send/retry loop") 
@@ -106,6 +107,14 @@ class UDP:
             except Exception as e:
                 logger.error("Send loop error: %s\n%s", e, traceback.format_exc())
             time.sleep(0.1)
+        logger.info("Exited send loop.")
+
+    def cancel_all_pending(self):
+        logger.info("Cancelling all pending messages")
+        for message_id, pending in list(self._pending_acks.items()):
+            if not pending.future.done():
+                self._complete_future(pending.future, False, "Cancelled")
+            del self._pending_acks[message_id]
 
     def _process_pending_messages(self):
         current_time = time.time()

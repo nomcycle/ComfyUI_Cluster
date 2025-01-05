@@ -1,9 +1,11 @@
 from typing import Dict
+
 from ..log import logger
+from ..instance import ThisInstance
 
 class StateHandler:
     from .state_result import StateResult
-    def __init__(self, instance: StateResult, expected_state: int, expected_message_types: int):
+    def __init__(self, instance: ThisInstance, expected_state: int, expected_message_types: int):
         self._instance = instance
         self._expected_state = expected_state
         self._expected_message_types = expected_message_types

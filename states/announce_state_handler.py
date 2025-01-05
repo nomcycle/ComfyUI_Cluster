@@ -10,13 +10,12 @@ from ..protobuf.messages_pb2 import (
 
 from .state_handler import StateHandler
 from .idle_state import IdleStateHandler
-from ..instance import Instance, LeaderInstance, FollowerInstance
 from .state_result import StateResult
 
-from ..instance import Instance, LeaderInstance, FollowerInstance
+from ..instance import ThisInstance, OtherLeaderInstance, OtherFollowerInstance
 
 class AnnounceInstanceStateHandler(StateHandler):
-    def __init__(self, instance: 'Instance'):
+    def __init__(self, instance: 'ThisInstance'):
         super().__init__(instance, ClusterState.POPULATING, ClusterMessageType.ANNOUNCE)
 
     def send_announce(self):
@@ -34,31 +33,31 @@ class AnnounceInstanceStateHandler(StateHandler):
 
     def handle_message(self, current_state: int, message, addr: str) -> StateResult | None:
         announce_instance = ParseDict(message, ClusterAnnounceInstance())
-        another_instance: Instance = None
+        other_instance: Instance = None
 
         if announce_instance.header.sender_instance_id in self._instance.cluster.instances:
-            another_instance = self._instance.cluster.instances[announce_instance.header.sender_instance_id]
-            another_instance.all_accounted_for = announce_instance.all_accounted_for
+            other_instance = self._instance.cluster.instances[announce_instance.header.sender_instance_id]
+            other_instance.all_accounted_for = announce_instance.all_accounted_for
         else:
             logger.info("New cluster instance '%s' discovered at %s", announce_instance.header.sender_instance_id, addr)
 
             role = announce_instance.role
-            another_instance = None
+            other_instance = None
 
             if role == ClusterRole.LEADER:
-                another_instance = LeaderInstance(self._instance.cluster, announce_instance.header.sender_instance_id, addr, role)
+                other_instance = OtherLeaderInstance(announce_instance.header.sender_instance_id, addr, role)
             else: 
-                another_instance = FollowerInstance(self._instance.cluster, announce_instance.header.sender_instance_id, addr, role)
+                other_instance = OtherFollowerInstance(announce_instance.header.sender_instance_id, addr, role)
 
-            another_instance.all_accounted_for = announce_instance.all_accounted_for
-            self._instance.cluster.instances[announce_instance.header.sender_instance_id] = another_instance
+            other_instance.all_accounted_for = announce_instance.all_accounted_for
+            self._instance.cluster.instances[announce_instance.header.sender_instance_id] = other_instance
             self._instance.cluster.expected_instances.append(addr)
 
             if self._instance.cluster.all_accounted_for():
                 logger.info("All cluster instances connected (%d total)", self._instance.cluster.instance_count)
                 self._instance.cluster.udp.set_cluster_instance_addresses(self._instance.cluster.expected_instances)
 
-        another_instance.all_accounted_for = announce_instance.all_accounted_for
+        other_instance.all_accounted_for = announce_instance.all_accounted_for
         all_instances_all_accounted_for = all(instance.all_accounted_for for instance in self._instance.cluster.instances.values())
         if self._instance.cluster.all_accounted_for() and all_instances_all_accounted_for:
             logger.info("All instances are populated - transitioning to IDLE state")

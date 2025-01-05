@@ -10,10 +10,10 @@ from ..protobuf.messages_pb2 import (
 from .state_handler import StateHandler
 from .state_result import StateResult
 
-from ..instance import Instance
+from ..instance import ThisInstance
 
 class IdleStateHandler(StateHandler):
-    def __init__(self, instance: Instance):
+    def __init__(self, instance: ThisInstance):
         super().__init__(instance, ClusterState.IDLE, ClusterMessageType.SIGNAL_IDLE)
 
     async def handle_state(self, current_state: int) -> StateResult | None:
