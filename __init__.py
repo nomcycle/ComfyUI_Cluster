@@ -1,10 +1,10 @@
-from .cluster_node import ClusterNode, create_cluster_instance_node
+from .instance_loop import InstanceLoop, create_instance_loop
 from .protobuf.messages_pb2 import ClusterRole
 
 class SyncedNode:
 
     node_count = 0
-    node: ClusterNode = create_cluster_instance_node()
+    node: InstanceLoop = create_instance_loop()
 
     def __init__(self):
         SyncedNode.node_count += 1

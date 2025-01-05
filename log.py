@@ -11,7 +11,7 @@ def setup_logger(name='ComfyUI_Cluster'):
         )
         handler.setFormatter(formatter)
         logger.addHandler(handler)
-        logger.setLevel(logging.INFO)
+        logger.setLevel(logging.DEBUG)
         # Prevent propagation to root logger
         logger.propagate = False
     

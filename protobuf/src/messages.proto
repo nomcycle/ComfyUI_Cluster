@@ -7,48 +7,57 @@ enum ClusterRole {
 }
 
 enum ClusterState {
-    POPULATING = 0;
-    IDLE = 1;
-    EXECUTING = 2;
-    ERROR = 3;
+    INITIALIZE = 0;
+    POPULATING = 1;
+    IDLE = 2;
+    EXECUTING = 4;
+    ERROR = 8;
 }
 
 enum ClusterMessageType {
     UNKNOWN = 0;
     ACK = 1;
     SIGNAL_HOT_RELOAD = 2;
-    ANNOUNCE = 3;
-    FENCE_REQUEST = 4;
-    FENCE_RESPONSE = 5;
+    ANNOUNCE = 4;
+    SIGNAL_IDLE = 8;
+    FENCE_REQUEST = 16;
+    FENCE_RESPONSE = 32;
+}
+
+message ClusterMessageHeader {
+    ClusterMessageType type = 1;
+    int32 message_id = 2;
+    string sender_instance_id = 3;
+    int32 process_id = 4;
+    bool require_ack = 5;
 }
 
 message ClusterAck {
-    ClusterMessageType type = 1;
-    int32 message_id = 2;
-    int32 ack_message_id = 3;
+    ClusterMessageHeader header = 1;
+    int32 ack_message_id = 2;
 }
 
 message ClusterSignalHotReload {
-    ClusterMessageType type = 1;
-    int32 message_id = 2;
-    string timestamp = 3;
+    ClusterMessageHeader header = 1;
+    string timestamp = 2;
 }
 
 message ClusterFenceRequest {
-    ClusterMessageType type = 1;
-    int32 message_id = 2;
-    int32 node_id = 3;
+    ClusterMessageHeader header = 1;
+    int32 node_id = 2;
 }
 
 message ClusterFenceResponse {
-    ClusterMessageType type = 1;
-    int32 message_id = 2;
-    int32 node_id = 3;
+    ClusterMessageHeader header = 1;
+    int32 node_id = 2;
 }
 
 message ClusterAnnounceInstance {
-    ClusterMessageType type = 1;
-    int32 message_id = 2;
-    string instance_id = 3;
-    ClusterRole role = 4; 
+    ClusterMessageHeader header = 1;
+    ClusterRole role = 2; 
+    bool all_accounted_for = 3;
+}
+
+message ClusterSignalIdle {
+    ClusterMessageHeader header = 1;
 }

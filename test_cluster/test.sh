@@ -50,6 +50,7 @@ sudo docker run -d --rm \
     -e COMFY_CLUSTER_SSH_PUBKEY="$PUBKEY" \
     -e COMFY_CLUSTER_PORT=${LEADER_PORT} \
     -e COMFY_CLUSTER_SKIP_SETUP=${SKIP_SETUP} \
+    -e COMFY_CLUSTER_UDP_BROADCAST="true" \
     -e COMFY_CLUSTER_INSTANCE_COUNT=$((FOLLOWER_COUNT + 1)) \
     -e COMFY_CLUSTER_ROLE="LEADER" \
     -v "$VOLUME:/workspace" \
@@ -67,8 +68,12 @@ for i in $(seq 0 $((FOLLOWER_COUNT-1))); do
         -e COMFY_CLUSTER_SSH_PUBKEY="$PUBKEY" \
         -e COMFY_CLUSTER_PORT=${port} \
         -e COMFY_CLUSTER_SKIP_SETUP=${SKIP_SETUP} \
+        -e COMFY_CLUSTER_UDP_BROADCAST="true" \
         -e COMFY_CLUSTER_INSTANCE_COUNT=$((FOLLOWER_COUNT + 1)) \
         -e COMFY_CLUSTER_ROLE="FOLLOWER" \
         -v "$VOLUME:/workspace" \
         comfyui-cluster
 done
+
+# Listen to leader container logs
+sudo docker logs -f "$LEADER_NAME"
