@@ -16,6 +16,7 @@ from .state_result import StateResult
 from ..instance import ThisInstance
 from execution import validate_prompt
 from ..env_vars import EnvVars
+from .executing_state import ExecutingStateHandler
 
 class IdleStateHandler(StateHandler):
     def __init__(self, instance: ThisInstance):
@@ -47,6 +48,8 @@ class IdleStateHandler(StateHandler):
                 response = requests.post(url, json=json_data)
                 response.raise_for_status()
                 logger.info("Successfully posted prompt to local ComfyUI instance")
+                return StateResult(current_state, self, ClusterState.EXECUTING, ExecutingStateHandler(self._instance))
+
             except requests.exceptions.RequestException as e:
                 logger.error(f"Error posting prompt: {str(e)}")
         else:

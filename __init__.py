@@ -1,22 +1,42 @@
 import requests
 import io
 import torch
+import asyncio
+import traceback
 
-from .instance_loop import InstanceLoop, get_instance_loop
+from aiohttp import web
+from server import PromptServer
+
+from .instance_loop import InstanceLoop, get_instance_loop, instance_loop
 from .protobuf.messages_pb2 import ClusterRole
 from .env_vars import EnvVars
 from .log import logger
 
 class SyncedNode:
 
-    node_count = 0
     instance: InstanceLoop = get_instance_loop()
+    node_count = 0
 
     def __init__(self):
         SyncedNode.node_count += 1
         self._node_instance_id = SyncedNode.node_count
 
-class FenceClusteredWorkflow(SyncedNode):
+class ClusterInstanceIndex(SyncedNode):
+    def __init__(self):
+        super().__init__()
+
+    @classmethod
+    def INPUT_TYPES(s):
+        return {}
+
+    RETURN_TYPES = ("INT",)
+    FUNCTION = "execute"
+    CATEGORY = "Cluster"
+
+    def execute(self):
+        return (EnvVars.get_instance_index(),)
+
+class ClusterFanInTensorsToBatch(SyncedNode):
     def __init__(self):
         super().__init__()
 
@@ -32,25 +52,21 @@ class FenceClusteredWorkflow(SyncedNode):
     FUNCTION = "execute"
     CATEGORY = "Cluster"
 
-    def _build_url (self, addr: str, endpoint: str):
-        return f"http://{addr}:{EnvVars.get_comfy_port()}/{endpoint}"
+    def blocking_sync(self, input):
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        instance: InstanceLoop = get_instance_loop()
+        return loop.run_until_complete(instance._this_instance.fanin_tensor(input[0]))
 
     def execute(self, input):
-        # if self.instance._this_instance.role == ClusterRole.LEADER:
-        #     for instance_id, instance in self.instance._this_instance.cluster.instances.items():
-        #         buffer = io.BytesIO()
-        #         torch.save(input, buffer)
-        #         url = self._build_url(instance.address, "/cluster/image")
-        #         print(f"Sending image data to {url}")
-        #         requests.post(url, data=buffer.getvalue())
-        #     return (input,)
-        # else:
-        #     # Return the tensor received from the leader
-        #     return (SyncedNode.instance._synced_tensor,)
-        return (input,)
+        try:
+            logger.info(input)
+            output = self.blocking_sync(input)
+            return (output,)
+        except Exception as e:
+            logger.error("Error executing fan in tensors: %s\n%s", str(e), traceback.format_exc())
+            raise e
 
-from aiohttp import web
-from server import PromptServer
 @PromptServer.instance.routes.post("/cluster/queue")
 async def queue(request):
     try:
@@ -63,21 +79,14 @@ async def queue(request):
         logger.error("Error handling request", exc_info=True)
         return web.Response(status=500)
 
-# 
-# @PromptServer.instance.routes.post("/cluster/image")
-# async def sync_image(request):
-#     data = await request.read()
-#     print(f"Received image data of size {len(data)} bytes")
-#     tensor = torch.load(io.BytesIO(data))
-#     SyncedNode.instance._synced_tensor = tensor
-#     return web.Response(status=200)
-
 NODE_CLASS_MAPPINGS = {
-    "FenceClusteredWorkflow": FenceClusteredWorkflow
+    "ClusterFanInTensorsToBatch": ClusterFanInTensorsToBatch,
+    "ClusterInstanceIndex": ClusterInstanceIndex
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "FenceClusteredWorkflow": "Sync Clustered Workflow"
+    "ClusterFanInTensorsToBatch": "Cluster Fan in Tensors to Batch",
+    "ClusterInstanceIndex": "Cluster Instance Index"
 }
 
 WEB_DIRECTORY = "./js"

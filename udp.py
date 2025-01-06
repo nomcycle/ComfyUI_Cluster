@@ -57,22 +57,23 @@ class ACKResult:
         self.error_msg = error_msg
 
 class UDP:
-    def __init__(self, callback, async_loop, instance_id: str):
+    def __init__(self, message_callback, buffer_callback, async_loop, instance_id: str):
         logger.info("Initializing UDP handler")
-        self._init_components(callback, async_loop, instance_id)
+        self._init_components(message_callback, buffer_callback, async_loop, instance_id)
         self._start_threads()
 
-    def _init_components(self, callback, async_loop, instance_id):
+    def _init_components(self, message_callback, buffer_callback, async_loop, instance_id):
         self._instance_id: str = instance_id
-        self._listener = UDPListener(EnvVars.get_listen_address(), EnvVars.get_listen_port(), self._handle_message)
-        self._sender = UDPSender(EnvVars.get_send_port())
         self._message_queue: queue.Queue = queue.Queue()
         self._message_index: int = 0
         self._pending_acks: Dict[int, PendingMessage] = {}
         self._cluster_instance_addressses: [str] = []
-        self.on_receive_message_callback = callback
+        self.on_receive_message_callback = message_callback
         self._loop = async_loop
         self._running: bool = True
+
+        self._listener = UDPListener(EnvVars.get_listen_address(), EnvVars.get_listen_port(), self._handle_message, buffer_callback)
+        self._sender = UDPSender(EnvVars.get_send_port())
 
     def _start_threads(self):
         self._receive_thread = threading.Thread(target=self._receive_loop, daemon=True)
@@ -153,16 +154,16 @@ class UDP:
 
     def _send_message(self, queued_msg):
         if queued_msg.optional_addr is not None:
-            return self._emit(queued_msg.message, queued_msg.optional_addr)
+            return self.emit(queued_msg.message, queued_msg.optional_addr)
         elif EnvVars.get_udp_broadcast():
-            return self._emit(queued_msg.message)
+            return self.emit(queued_msg.message)
         else:
             return self._send_to_all_instances(queued_msg.message)
 
     def _send_to_all_instances(self, message):
         success = True
         for hostname in self._cluster_instance_addressses:
-            if not self._emit(message, hostname):
+            if not self.emit(message, hostname):
                 logger.error("Failed sending to %s", hostname)
                 success = False
         return success
@@ -187,9 +188,9 @@ class UDP:
         if sender_instance_id == self._instance_id:
             return
 
-        msg_type_str = header.get('type', ClusterMessageType.UNKNOWN)
+        msg_type_str = header.get('type', -1)
         msg_type = ClusterMessageType.Value(msg_type_str)
-        if msg_type == ClusterMessageType.UNKNOWN:
+        if msg_type == -1:
             logger.error("Unknown message type")
             return
 
@@ -214,9 +215,21 @@ class UDP:
 
         self.on_receive_message_callback(msg_type, message, addr)
 
-    def _emit(self, msg, addr: str = None):
+    def emit(self, msg, addr: str = None):
         msg.header.process_id = os.getpid()
-        return self._sender.send(msg, addr)
+        self._sender.send(msg, addr)
+
+    def emit_bytes(self, chunk_count: int, chunk_ids: [int], common_chunk_byte_header: [], byte_buffer, addr: str = None):
+        chunk_size = 1460
+        chunk_id_bytes = [id.to_bytes(4, byteorder='big') for id in chunk_ids]
+        buffer_view = memoryview(byte_buffer)
+        buffer_flag = int(123456789).to_bytes(4, byteorder='big')
+        
+        for i in range(chunk_count):
+            start = i * chunk_size
+            end = min(start + chunk_size, len(byte_buffer))
+            chunk_with_id = buffer_flag + chunk_id_bytes[i] + common_chunk_byte_header + buffer_view[start:end].tobytes()
+            self._sender.send_bytes(chunk_with_id, addr)
 
     def _send_ack(self, message_id: int, addr: str):
         ack = ClusterAck()
@@ -224,7 +237,7 @@ class UDP:
         ack.header.message_id = self._iterate_message_id()
         ack.header.sender_instance_id = self._instance_id
         ack.ack_message_id = message_id
-        self._emit(ack, addr)
+        self.emit(ack, addr)
 
     def _handle_ack(self, message, addr: str):
         ack = ParseDict(message, ClusterAck())

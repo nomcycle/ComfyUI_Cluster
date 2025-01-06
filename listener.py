@@ -6,10 +6,11 @@ from .log import logger
 from .env_vars import EnvVars
 
 class UDPListener:
-    def __init__(self, host: str, port: int, message_callback):
+    def __init__(self, host: str, port: int, message_callback, buffer_callback):
         self._host = host
         self._port = port
         self.message_callback = message_callback
+        self.buffer_callback = buffer_callback
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -27,6 +28,12 @@ class UDPListener:
     def poll(self):
         data, addr = self.sock.recvfrom(65535)  # Max UDP packet size
         sender_addr = addr[0]
+
+        if len(data) >= 4:
+            magic_number = int.from_bytes(data[:4], byteorder='big')
+            if magic_number == 123456789:
+                self.buffer_callback(data, sender_addr)
+                return
 
         message = json.loads(data.decode())
         header = message.get('header', None)

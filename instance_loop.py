@@ -11,11 +11,14 @@ from .protobuf.messages_pb2 import ClusterRole
 from .cluster import Cluster
 from .instance import ThisInstance, ThisLeaderInstance, ThisFollowerInstance
 
+global instance_loop
+instance_loop = None
+
 class InstanceLoop:
-    _instance = None
 
     def __init__(self) -> None:
-        if InstanceLoop._instance is not None:
+        global instance_loop
+        if instance_loop is not None:
             raise Exception("ClusterNode is a singleton - use ClusterNode.get_instance()")
 
         self._instance_role = EnvVars.get_instance_role()
@@ -33,19 +36,23 @@ class InstanceLoop:
 
     def _on_hot_reload(self):
         logger.info("Cleaning up...")
+
         self._running = False
         self._this_instance.cluster.udp.cancel_all_pending()
+
         del self._this_instance.cluster.udp
         del self._this_instance.cluster
         del self._this_instance
-        InstanceLoop._instance = None
+
+        global instance_loop
+        del instance_loop
 
     def _run_state_loop(self):
         try:
             self._state_loop = asyncio.new_event_loop()
             asyncio.set_event_loop(self._state_loop)
 
-            udp: UDP = UDP(self._handle_message, self._state_loop, self._instance_id)
+            udp: UDP = UDP(self._handle_message, self._handle_buffer, self._state_loop, self._instance_id)
             self._cluster = Cluster(udp)
             if self._instance_role == ClusterRole.LEADER:
                 self._this_instance = ThisLeaderInstance(self._cluster, self._instance_id, 'localhost', ClusterRole.LEADER, self._on_hot_reload)
@@ -65,6 +72,15 @@ class InstanceLoop:
 
         logger.info("Exited state loop.")
 
+    def _handle_buffer(self, buffer, addr: str):
+        if not self._running:
+            return
+
+        try:
+            self._this_instance.handle_buffer(buffer, addr)
+        except Exception as e:
+            logger.error("Buffer handling failed: %s", str(e), exc_info=True)
+
     def _handle_message(self, msg_type_str: str, message, addr: str):
         if not self._running:
             return
@@ -80,9 +96,10 @@ class LeaderInstanceLoop(InstanceLoop):
 
     @classmethod
     def get_instance(cls):
-        if cls._instance is None:
-            cls._instance = cls()
-        return cls._instance
+        global instance_loop
+        if instance_loop is None:
+            instance_loop = cls()
+        return instance_loop
 
     def _handle_message(self, msg_type, message, addr):
         super()._handle_message(msg_type, message, addr)
@@ -93,9 +110,10 @@ class FollowerInstanceLoop(InstanceLoop):
 
     @classmethod
     def get_instance(cls):
-        if cls._instance is None:
-            cls._instance = cls()
-        return cls._instance
+        global instance_loop
+        if instance_loop is None:
+            instance_loop = cls()
+        return instance_loop
 
     def _handle_message(self, msg_type, message, addr):
         super()._handle_message(msg_type, message, addr)

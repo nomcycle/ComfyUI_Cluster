@@ -29,3 +29,6 @@ class StateHandler:
 
     def handle_message(self, current_state: int, msg_type: int, message, addr) -> StateResult | None:
         raise NotImplementedError("handle_message not implemented")
+
+    def handle_buffer(self, current_state: int, byte_buffer, addr: str) -> StateResult | None:
+        raise NotImplementedError("handle_buffer not implemented")

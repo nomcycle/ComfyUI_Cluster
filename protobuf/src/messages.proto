@@ -1,9 +1,8 @@
 syntax = "proto3";
 
 enum ClusterRole {
-    UNSET = 0;
-    LEADER = 1;
-    FOLLOWER = 2;
+    LEADER = 0;
+    FOLLOWER = 1;
 }
 
 enum ClusterState {
@@ -15,14 +14,13 @@ enum ClusterState {
 }
 
 enum ClusterMessageType {
-    UNKNOWN = 0;
-    ACK = 1;
-    SIGNAL_HOT_RELOAD = 2;
-    ANNOUNCE = 4;
-    SIGNAL_IDLE = 8;
-    DISTRIBUTE_PROMPT = 16;
-    FENCE_REQUEST = 32;
-    FENCE_RESPONSE = 64;
+    ACK = 0;
+    SIGNAL_HOT_RELOAD = 1;
+    ANNOUNCE = 2;
+    SIGNAL_IDLE = 4;
+    DISTRIBUTE_PROMPT = 8;
+    DISTRIBUTE_BUFFER_BEGIN = 16;
+    DISTRIBUTE_BUFFER_ACK = 32;
 }
 
 message ClusterMessageHeader {
@@ -62,6 +60,24 @@ message ClusterAnnounceInstance {
 message ClusterDistributePrompt {
     ClusterMessageHeader header = 1;
     string prompt = 2; 
+}
+
+enum ClusterBufferType {
+    TENSOR = 0;
+}
+
+message ClusterDistributeBufferBegin {
+    ClusterMessageHeader header = 1;
+    int32 instance_index = 2;
+    ClusterBufferType buffer_type = 3;
+    int32 buffer_byte_size = 4;
+    int32 chunk_count = 5;
+    repeated uint32 chunk_ids = 6;
+}
+
+message ClusterDistributeBufferAck {
+    ClusterMessageHeader header = 1;
+    int32 instance_index = 2;
 }
 
 message ClusterSignalIdle {
