@@ -143,30 +143,28 @@ class UDP:
 
     def _process_message_queue(self):
         while not self._message_queue.empty():
-            queued_msg = self._message_queue.get()
-            success = self._send_message(queued_msg)
-            self._message_queue.task_done()
-            
-            if not success:
+            try:
+                queued_msg = self._message_queue.get()
+                self._send_message(queued_msg)
+                self._message_queue.task_done()
+                
+            except Exception as e:
                 msg_id = queued_msg.message.header.message_id
-                logger.error("Failed to send msg %s", msg_id)
+                logger.error("Error processing message from queue (msg_id=%s): %s\n%s", msg_id, e, traceback.format_exc())
                 self._handle_send_failure(msg_id)
+                raise e
 
     def _send_message(self, queued_msg):
         if queued_msg.optional_addr is not None:
-            return self.emit(queued_msg.message, queued_msg.optional_addr)
+            self.emit(queued_msg.message, queued_msg.optional_addr)
         elif EnvVars.get_udp_broadcast():
-            return self.emit(queued_msg.message)
+            self.emit(queued_msg.message)
         else:
-            return self._send_to_all_instances(queued_msg.message)
+            self._send_to_all_instances(queued_msg.message)
 
     def _send_to_all_instances(self, message):
-        success = True
         for hostname in self._cluster_instance_addressses:
-            if not self.emit(message, hostname):
-                logger.error("Failed sending to %s", hostname)
-                success = False
-        return success
+            self.emit(message, hostname)
 
     def _handle_send_failure(self, message_id: int):
         for pending_key, pending in list(self._pending_acks.items()):
@@ -220,6 +218,7 @@ class UDP:
         self._sender.send(msg, addr)
 
     def emit_bytes(self, chunk_count: int, chunk_ids: [int], common_chunk_byte_header: [], byte_buffer, addr: str = None):
+        logger.debug(f"Emitting {chunk_count} chunks totalling in size: {len(byte_buffer)}")
         chunk_size = 1460
         chunk_id_bytes = [id.to_bytes(4, byteorder='big') for id in chunk_ids]
         buffer_view = memoryview(byte_buffer)
@@ -230,8 +229,13 @@ class UDP:
             end = min(start + chunk_size, len(byte_buffer))
             chunk_with_id = buffer_flag + chunk_id_bytes[i] + common_chunk_byte_header + buffer_view[start:end].tobytes()
             self._sender.send_bytes(chunk_with_id, addr)
+            time.sleep(0.01)
+            logger.debug(f"Progress: {i+1}/{chunk_count} chunks emitted")
+
+        logger.debug(f"Finished emitting buffer.")
 
     def _send_ack(self, message_id: int, addr: str):
+        logger.debug("Sending ACK for message %d to %s", message_id, addr)
         ack = ClusterAck()
         ack.header.type = ClusterMessageType.ACK
         ack.header.message_id = self._iterate_message_id()
@@ -242,6 +246,7 @@ class UDP:
     def _handle_ack(self, message, addr: str):
         ack = ParseDict(message, ClusterAck())
         if ack.ack_message_id in self._pending_acks:
+            logger.debug("Received ACK message from %s: for message: %s", addr, ack.ack_message_id)
             self._process_ack(ack.ack_message_id, addr)
         else:
             logger.warning("ACK for unknown msg %s", ack.ack_message_id)
@@ -249,8 +254,10 @@ class UDP:
     def _process_ack(self, message_id: int, addr: str):
         pending_msg = self._pending_acks[message_id]
         if addr in pending_msg.pending_acks:
+            logger.debug("Removing pending ACK for addr %s from message %d", addr, message_id)
             del pending_msg.pending_acks[addr]
             if len(pending_msg.pending_acks) == 0 and not pending_msg.future.done():
+                logger.debug("All ACKs received for message %d, completing future", message_id)
                 del self._pending_acks[message_id]
                 self._complete_future(pending_msg.future, True, None)
         else:

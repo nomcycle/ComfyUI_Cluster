@@ -75,7 +75,7 @@ class ThisInstance:
             logger.info("Instance is in state: %s, waiting for execution...", self._current_state)
             await asyncio.sleep(0.01)
         executing_state_handler: ExecutingStateHandler = self._current_state_handler
-        await executing_state_handler.distribute_tensor(tensor)
+        return await executing_state_handler.distribute_tensor(tensor)
 
     def handle_state_result(self, state_result):
         if state_result is None or state_result.next_state is None:
@@ -87,6 +87,11 @@ class ThisInstance:
             self._current_state_handler = state_result.next_state_handler
 
     def handle_buffer(self, buffer, addr: str):
+
+        while self._current_state != ClusterState.EXECUTING:
+            logger.info("Instance is in state: %s, waiting for execution...", self._current_state)
+            continue
+
         state_result = self._current_state_handler.handle_buffer(self._current_state, buffer, addr)
         self.handle_state_result(state_result)
 

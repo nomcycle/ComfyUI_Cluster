@@ -34,9 +34,9 @@ class ExecutingStateHandler(StateHandler):
         with self._chunk_lock:
             if self._received_buffers_from_all_instances:
                 message = ClusterDistributeBufferAck()
-                message.type = ClusterMessageType.DISTRIBUTE_BUFFER_ACK,
-                message.instance_index = EnvVars.get_instance_index()
+                message.header.type = ClusterMessageType.DISTRIBUTE_BUFFER_ACK
                 message.header.require_ack = True
+                message.instance_index = EnvVars.get_instance_index()
                 await self._instance.cluster.udp.send_and_wait(message)
                 return None
 
@@ -51,7 +51,8 @@ class ExecutingStateHandler(StateHandler):
                 self._expected_chunk_ids = distribute_buffer.chunk_ids
                 self._received_chunks = {}
         elif msg_type == ClusterMessageType.DISTRIBUTE_BUFFER_ACK:
-            pass
+            from .idle_state import IdleStateHandler
+            return StateResult(current_state, self, ClusterState.IDLE, IdleStateHandler(self._instance))
         return None
 
     def handle_buffer(self, current_state: int, byte_buffer, addr: str) -> StateResult | None:
@@ -63,8 +64,8 @@ class ExecutingStateHandler(StateHandler):
                 logger.error("Received invalid buffer")
                 return None
 
-            instance_index = int.from_bytes(byte_buffer[4:8], byteorder='big')  # Skip first 4 bytes (buffer flag)
-            chunk_id = int.from_bytes(byte_buffer[8:12], byteorder='big')  # Skip first 8 bytes (4 buffer flag + 4 instance index)
+            chunk_id = int.from_bytes(byte_buffer[4:8], byteorder='big') # Skip first 4 bytes (buffer flag)
+            instance_index = int.from_bytes(byte_buffer[8:12], byteorder='big') # Skip first 8 bytes (4 buffer flag + 4 instance index)
             chunk_data = byte_buffer[12:]  # Skip first 12 bytes (4 buffer flag + 4 instance index + 4 chunk id)
         
             if not self._expected_chunk_ids or chunk_id not in self._expected_chunk_ids:
@@ -77,7 +78,8 @@ class ExecutingStateHandler(StateHandler):
             self._received_chunks[instance_index][chunk_id] = chunk_data
             
             total_chunks = sum(map(len, self._received_chunks.values()))
-            expected_total = len(self._expected_chunk_ids) * EnvVars.get_instance_count()
+            expected_total = len(self._expected_chunk_ids) * (EnvVars.get_instance_count() - 1)
+            logger.debug(f"Received {total_chunks}/{expected_total} chunks")
             if total_chunks == expected_total:
                 for instance_index, instance_chunks in self._received_chunks.items():
                     ordered_chunks = [instance_chunks[chunk_id] for chunk_id in self._expected_chunk_ids]
@@ -125,7 +127,13 @@ class ExecutingStateHandler(StateHandler):
                 if self._received_buffers_from_all_instances:
                     logger.info("All buffers received successfully")
                     instance_count = EnvVars.get_instance_count()
-                    return [self._buffers[i] for i in range(instance_count)]
+                    buffers = []
+                    for i in range(instance_count):
+                        if i == EnvVars.get_instance_index():
+                            buffers.append(b'')  # Empty buffer for own index
+                        else:
+                            buffers.append(self._buffers[i])
+                    return buffers
                     
             if time.time() - start_time > timeout:
                 raise TimeoutError("Timed out waiting for buffer distribution")
@@ -137,12 +145,23 @@ class ExecutingStateHandler(StateHandler):
         # TODO: Current implementation assumes all tensors have same shape
         # Should validate shapes match before combining
 
-        # Convert tensor to bytes and distribute
+        # Get original shape and convert tensor to bytes
+        original_shape = tensor.shape
         byte_buffer = tensor.numpy().tobytes()
         buffers = await self.distribute_buffer(ClusterBufferType.TENSOR, byte_buffer)
         
         # Reconstruct tensor from received buffers
         instance_count = EnvVars.get_instance_count()
+        instance_index = EnvVars.get_instance_index()
+        
+        # Insert tensor bytes at instance index
+        buffers[instance_index] = byte_buffer
+        
         combined_buffer = b''.join(buffers)
         array = np.frombuffer(combined_buffer, dtype=np.float32)
-        return torch.from_numpy(array).reshape(instance_count, -1)
+        
+        # Reshape into batch tensor using original shape
+        batch_shape = (instance_count,) + original_shape
+        batch_tensor = torch.from_numpy(array).reshape(batch_shape)
+        
+        return batch_tensor

@@ -56,12 +56,13 @@ class ClusterFanInTensorsToBatch(SyncedNode):
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         instance: InstanceLoop = get_instance_loop()
-        return loop.run_until_complete(instance._this_instance.fanin_tensor(input[0]))
+        return loop.run_until_complete(instance._this_instance.fanin_tensor(input))
 
     def execute(self, input):
         try:
             logger.info(input)
-            output = self.blocking_sync(input)
+            # temp_tensor = torch.ones(32, 32, 4) # Temporary black tensor for testing
+            output = self.blocking_sync(input[0])
             return (output,)
         except Exception as e:
             logger.error("Error executing fan in tensors: %s\n%s", str(e), traceback.format_exc())
