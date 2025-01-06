@@ -4,6 +4,24 @@
     // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
     "version": "0.2.0",
     "configurations": [
+
+        {
+            "name": "Test Auto Crop Faces",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "custom_nodes/ComfyUI-AutoCropFaces/test.py",
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "Debug Comfy",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "main.py",
+            "console": "integratedTerminal",
+            "args": [
+                "--listen"
+            ]
+        },
         {
             "name": "Cluster LEADER",
             "type": "python",
@@ -22,7 +40,8 @@
                 "COMFY_CLUSTER_ROLE": "LEADER",
                 "COMFY_CLUSTER_SINGLE_HOST": "true",
                 "COMFY_CLUSTER_LISTEN_PORT": "9997",
-                "COMFY_CLUSTER_SEND_PORT": "9998"
+                "COMFY_CLUSTER_SEND_PORT": "9998",
+                "COMFY_CLUSTER_COMFY_PORT": "8189"
             }
         }
         {
@@ -43,7 +62,8 @@
                 "COMFY_CLUSTER_ROLE": "FOLLOWER",
                 "COMFY_CLUSTER_SINGLE_HOST": "true",
                 "COMFY_CLUSTER_LISTEN_PORT": "9998",
-                "COMFY_CLUSTER_SEND_PORT": "9997"
+                "COMFY_CLUSTER_SEND_PORT": "9997",
+                "COMFY_CLUSTER_COMFY_PORT": "8190"
             }
         }
     ],

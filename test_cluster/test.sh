@@ -48,7 +48,7 @@ sudo docker run -d --rm \
     --network $NETWORK_NAME \
     -p ${LEADER_PORT}:${LEADER_PORT} \
     -e COMFY_CLUSTER_SSH_PUBKEY="$PUBKEY" \
-    -e COMFY_CLUSTER_PORT=${LEADER_PORT} \
+    -e COMFY_CLUSTER_COMFY_PORT=${LEADER_PORT} \
     -e COMFY_CLUSTER_SKIP_SETUP=${SKIP_SETUP} \
     -e COMFY_CLUSTER_UDP_BROADCAST="true" \
     -e COMFY_CLUSTER_INSTANCE_COUNT=$((FOLLOWER_COUNT + 1)) \
@@ -66,7 +66,7 @@ for i in $(seq 0 $((FOLLOWER_COUNT-1))); do
         --network $NETWORK_NAME \
         -p ${port}:${port} \
         -e COMFY_CLUSTER_SSH_PUBKEY="$PUBKEY" \
-        -e COMFY_CLUSTER_PORT=${port} \
+        -e COMFY_CLUSTER_COMFY_PORT=${port} \
         -e COMFY_CLUSTER_SKIP_SETUP=${SKIP_SETUP} \
         -e COMFY_CLUSTER_UDP_BROADCAST="true" \
         -e COMFY_CLUSTER_INSTANCE_COUNT=$((FOLLOWER_COUNT + 1)) \

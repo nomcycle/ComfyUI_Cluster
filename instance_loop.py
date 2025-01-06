@@ -38,6 +38,7 @@ class InstanceLoop:
         del self._this_instance.cluster.udp
         del self._this_instance.cluster
         del self._this_instance
+        InstanceLoop._instance = None
 
     def _run_state_loop(self):
         try:
@@ -99,5 +100,5 @@ class FollowerInstanceLoop(InstanceLoop):
     def _handle_message(self, msg_type, message, addr):
         super()._handle_message(msg_type, message, addr)
 
-def create_instance_loop():
+def get_instance_loop():
     return LeaderInstanceLoop.get_instance() if EnvVars.get_instance_role() == ClusterRole.LEADER else FollowerInstanceLoop.get_instance()

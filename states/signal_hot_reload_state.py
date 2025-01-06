@@ -31,7 +31,7 @@ class SignalHotReloadStateHandler(StateHandler):
         await asyncio.sleep(0)
         return StateResult(current_state, self, ClusterState.POPULATING, AnnounceInstanceStateHandler(self._instance))
 
-    def handle_message(self, current_state: int, message, addr) -> StateResult:
+    def handle_message(self, current_state: int, msg_type: int, message, addr) -> StateResult:
         signal_hot_reload = ParseDict(message, ClusterSignalHotReload())
         timestamp = float(signal_hot_reload.timestamp)
         logger.info("Hot reload signal received [timestamp=%s]", timestamp)

@@ -71,4 +71,4 @@ else
     update_custom_nodes
 fi
 
-$PYTHON main.py --cpu --listen "0.0.0.0" --port $COMFY_CLUSTER_PORT
+$PYTHON main.py --cpu --listen "0.0.0.0" --port $COMFY_CLUSTER_COMFY_PORT

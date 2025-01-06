@@ -17,15 +17,15 @@ class StateHandler:
             return False
         return True
 
-    def check_message_type(self, message_type: int):
-        logger.debug("Message type check: type=%d expected=%d", message_type, self._expected_message_types)
-        if message_type != self._expected_message_types and not (message_type & self._expected_message_types):
-            logger.warning("Invalid message type: %d not in %d", message_type, self._expected_message_types)
+    def check_message_type(self, msg_type: int):
+        logger.debug("Message type check: type=%d expected=%d", msg_type, self._expected_message_types)
+        if msg_type != self._expected_message_types and not (msg_type & self._expected_message_types):
+            logger.warning("Invalid message type: %d not in %d", msg_type, self._expected_message_types)
             return False
         return True
 
-    async def handle_state(self, current_state) -> StateResult | None:
+    async def handle_state(self, current_state: int) -> StateResult | None:
         raise NotImplementedError("handle_state not implemented")
 
-    def handle_message(self, current_state, message, addr) -> StateResult | None:
+    def handle_message(self, current_state: int, msg_type: int, message, addr) -> StateResult | None:
         raise NotImplementedError("handle_message not implemented")

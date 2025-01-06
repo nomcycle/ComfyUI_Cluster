@@ -20,8 +20,9 @@ enum ClusterMessageType {
     SIGNAL_HOT_RELOAD = 2;
     ANNOUNCE = 4;
     SIGNAL_IDLE = 8;
-    FENCE_REQUEST = 16;
-    FENCE_RESPONSE = 32;
+    DISTRIBUTE_PROMPT = 16;
+    FENCE_REQUEST = 32;
+    FENCE_RESPONSE = 64;
 }
 
 message ClusterMessageHeader {
@@ -56,6 +57,11 @@ message ClusterAnnounceInstance {
     ClusterMessageHeader header = 1;
     ClusterRole role = 2; 
     bool all_accounted_for = 3;
+}
+
+message ClusterDistributePrompt {
+    ClusterMessageHeader header = 1;
+    string prompt = 2; 
 }
 
 message ClusterSignalIdle {

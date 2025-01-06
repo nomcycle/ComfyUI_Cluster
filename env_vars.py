@@ -11,6 +11,7 @@ class EnvVars:
     _listen_port = None
     _send_port = None
     _listen_address = None
+    _comfy_port = None
 
     @classmethod
     def load(cls):
@@ -59,6 +60,13 @@ class EnvVars:
         except ValueError:
             raise Exception("COMFY_CLUSTER_SEND_PORT must be an integer value")
 
+        # Parse ComfyUI port
+        comfy_port = os.getenv('COMFY_CLUSTER_COMFY_PORT', '8188')
+        try:
+            cls._comfy_port = int(comfy_port)
+        except ValueError:
+            raise Exception("COMFY_CLUSTER_COMFY_PORT must be an integer value")
+
     @classmethod
     def get_instance_count(cls):
         if cls._instance_count is None:
@@ -106,3 +114,9 @@ class EnvVars:
         if cls._send_port is None:
             cls.load()
         return cls._send_port
+
+    @classmethod
+    def get_comfy_port(cls) -> int:
+        if cls._comfy_port is None:
+            cls.load()
+        return cls._comfy_port

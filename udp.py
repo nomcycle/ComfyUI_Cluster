@@ -263,6 +263,24 @@ class UDP:
 
         return result
 
+    async def send_and_wait_thread_safe(self, message, addr: str = None):
+        current_loop = asyncio.get_running_loop()
+        future = current_loop.create_future()
+        
+        def done_callback(task):
+            try:
+                result = task.result()
+                current_loop.call_soon_threadsafe(future.set_result, result)
+            except Exception as e:
+                current_loop.call_soon_threadsafe(future.set_exception, e)
+        
+        asyncio.run_coroutine_threadsafe(
+            self.send_and_wait(message, addr),
+            self._loop
+        ).add_done_callback(done_callback)
+        
+        return await future
+
     def _prepare_message(self, message):
         message_id = self._iterate_message_id()
         message.header.message_id = message_id

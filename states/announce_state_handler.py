@@ -31,7 +31,7 @@ class AnnounceInstanceStateHandler(StateHandler):
         self.send_announce()
         await asyncio.sleep(3)
 
-    def handle_message(self, current_state: int, message, addr: str) -> StateResult | None:
+    def handle_message(self, current_state: int, msg_type: int, message, addr: str) -> StateResult | None:
         announce_instance = ParseDict(message, ClusterAnnounceInstance())
         other_instance: Instance = None
 
