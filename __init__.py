@@ -60,8 +60,6 @@ class ClusterFanInTensorsToBatch(SyncedNode):
 
     def execute(self, input):
         try:
-            logger.info(input)
-            # temp_tensor = torch.ones(32, 32, 4) # Temporary black tensor for testing
             output = self.blocking_sync(input[0])
             return (output,)
         except Exception as e:

@@ -29,7 +29,8 @@ class IdleStateHandler(StateHandler):
         
         # logger.info("Sending idle signal to followers")
         # await self._instance.cluster.udp.send_and_wait(signal_idle)
-        await asyncio.sleep(0.1)
+        logger.info("Idling...")
+        await asyncio.sleep(1.0)
 
     def handle_message(self, current_state: int, msg_type: int, message, addr: str) -> StateResult | None:
         if msg_type == ClusterMessageType.DISTRIBUTE_PROMPT:

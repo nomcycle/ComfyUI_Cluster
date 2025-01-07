@@ -50,7 +50,7 @@ class UDPListener:
         if not EnvVars.get_single_host() and sender_addr in self.get_cached_local_addreses():
             return
 
-        logger.debug("(RECEIVED) UDP message from %s:%s\n%s", sender_addr, self._port, json.dumps(message, indent=2))
+        # logger.debug("(RECEIVED) UDP message from %s:%s\n%s", sender_addr, self._port, json.dumps(message, indent=2))
         
         if self.message_callback:
             self.message_callback(header, message, sender_addr)

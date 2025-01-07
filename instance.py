@@ -56,7 +56,7 @@ class ThisInstance:
     async def distribute_prompt(self, prompt_json):
         while self._current_state != ClusterState.IDLE:
             logger.info("Instance is in state: %s, waiting for idle...", self._current_state)
-            await asyncio.sleep(0.01)
+            await asyncio.sleep(0.5)
 
         message = ClusterDistributePrompt()
         message.header.type = ClusterMessageType.DISTRIBUTE_PROMPT
@@ -73,7 +73,7 @@ class ThisInstance:
 
         while self._current_state != ClusterState.EXECUTING:
             logger.info("Instance is in state: %s, waiting for execution...", self._current_state)
-            await asyncio.sleep(0.01)
+            await asyncio.sleep(0.5)
         executing_state_handler: ExecutingStateHandler = self._current_state_handler
         return await executing_state_handler.distribute_tensor(tensor)
 

@@ -17,14 +17,14 @@ class UDPSender:
             addr = '255.255.255.255'
 
         msg_json = MessageToJson(message)
-        logger.debug("(SENDING) UDP message to %s:%d:\n%s", addr, self.port, json.dumps(json.loads(msg_json), indent=2))
+        # logger.debug("(SENDING) UDP message to %s:%d:\n%s", addr, self.port, json.dumps(json.loads(msg_json), indent=2))
         self.sock.sendto(msg_json.encode(), (addr, self.port))
 
     def send_bytes(self, bytes, addr:str = None):
         if addr is None:
             addr = '255.255.255.255'
 
-        logger.debug("(SENDING) UDP buffer to %s:%d", addr, self.port)
+        # logger.debug("(SENDING) UDP buffer to %s:%d", addr, self.port)
         self.sock.sendto(bytes, (addr, self.port))
 
     def __del__(self):
