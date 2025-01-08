@@ -117,9 +117,10 @@ class ExecutingStateHandler(StateHandler):
             # Resend requested chunks
             instance_index = EnvVars.get_instance_index()
             common_chunk_byte_header = instance_index.to_bytes(4, byteorder='big')
+            buffer_flag = int(123456789).to_bytes(4, byteorder='big')
+
             for i, chunk_id in enumerate(resend_msg.missing_chunk_ids):
                 chunk_id_bytes = chunk_id.to_bytes(4, byteorder='big')
-                buffer_flag = self._expected_buffer_type.to_bytes(4, byteorder='big')
                 chunk_data = self._sent_chunks[chunk_id]
                 # logger.debug(f"Resending chunk {i+1}/{len(resend_msg.missing_chunk_ids)}: chunk_id={chunk_id}")
                 self._emit_byte_chunk(buffer_flag, chunk_id_bytes, common_chunk_byte_header, chunk_data, addr)
@@ -243,9 +244,9 @@ class ExecutingStateHandler(StateHandler):
                         buffers.append(self._received_buffers[i])
                 return buffers
                     
-            if time.time() - start_time > timeout:
-                logger.error("Buffer distribution timed out")
-                raise TimeoutError("Timed out waiting for buffer distribution")
+            # if time.time() - start_time > timeout:
+            #     logger.error("Buffer distribution timed out")
+            #     raise TimeoutError("Timed out waiting for buffer distribution")
                 
             logger.debug("Waiting for buffers from all instances...")
             await asyncio.sleep(0.1)
