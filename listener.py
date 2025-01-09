@@ -12,8 +12,21 @@ class UDPListener:
         self.message_callback = message_callback
         self.buffer_callback = buffer_callback
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        
+        # Increase receive buffer size significantly
+        receive_buffer_size = 16 * 1024 * 1024  # 16MB
+        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, receive_buffer_size)
+        
+        # Get actual buffer size (might be different from what we set)
+        actual_buffer_size = self.sock.getsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF)
+        logger.debug(f"UDP receive buffer size: {actual_buffer_size / 1024 / 1024:.2f} MB")
+        
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        
+        # Optional: Set timeout to prevent blocking indefinitely
+        # self.sock.settimeout(0.1)  # 100ms timeout
+        
         self.sock.bind((self._host, self._port))
         self._local_ips: [str] = None
         logger.debug("UDP listener bound to %s:%d", host, port)

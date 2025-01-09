@@ -1,4 +1,5 @@
 import asyncio
+import math
 import queue
 import threading
 import time
@@ -130,22 +131,55 @@ class UDP:
                     self._incoming_byte_buffer_queue.task_done()
             except Exception as e:
                 logger.error("Receive loop error: %s\n%s", e, traceback.format_exc())
-            time.sleep(0.01)
         logger.info("Exited receive loop.")
-    
+
+    def _process_batch(self, queue, emit_fn, batch_size=100):
+        if queue.empty():
+            return
+
+        start_time = time.time()
+        total_items = 0
+        
+        while not queue.empty():
+            # Process up to batch_size items as fast as possible
+            batch_count = 0
+            batch_start = time.time()
+            
+            while batch_count < batch_size and not queue.empty():
+                queued_item = queue.get()
+                emit_fn(queued_item)
+                queue.task_done()
+                batch_count += 1
+                total_items += 1
+                
+            # Only sleep between batches, not packets
+            batch_duration = time.time() - batch_start
+            # logger.debug("Batch processing took %.3fms", batch_duration * 1000)
+            
+            time.sleep(max(0.0001 - batch_duration, 0.0))
+        
+        total_duration = time.time() - start_time
+        # logger.info("Processed %d items in %.3fms (%.1f items/sec)", 
+        #            total_items, total_duration * 1000, total_items / total_duration if total_duration > 0 else 0)
+                
     def _send_and_retry_loop(self):
         logger.info("Starting send/retry loop")
         while self._running:
             try:
                 self._process_pending_messages()
-                while not self._outgoing_message_queue.empty():
-                    queued_msg = self._outgoing_message_queue.get()
-                    self._send_message(queued_msg)
-                    self._outgoing_message_queue.task_done()
-                while not self._outgoing_byte_buffer_queue.empty():
-                    queued_buffer = self._outgoing_byte_buffer_queue.get()
-                    self._emit_byte_buffer(queued_buffer.byte_buffer, queued_buffer.optional_addr)
-                    self._outgoing_byte_buffer_queue.task_done()
+                
+                # Process messages
+                self._process_batch(
+                    self._outgoing_message_queue,
+                    lambda msg: self._emit_message(msg.message, msg.optional_addr)
+                )
+
+                # Process byte buffers
+                self._process_batch(
+                    self._outgoing_byte_buffer_queue,
+                    lambda buf: self._emit_byte_buffer(buf.byte_buffer, buf.optional_addr)
+                )
+
             except Exception as e:
                 logger.error("Send loop error: %s\n%s", e, traceback.format_exc())
             time.sleep(0.1)
@@ -181,7 +215,7 @@ class UDP:
     def _retry_message(self, message_id: int, pending, addr: str):
         retry_count = pending.increment_retry(addr)
         logger.info("Retry %s/%s - msg %s to %s", retry_count, pending.MAX_RETRIES, message_id, addr)
-        self._outgoing_message_queue.put(OutgoingQueuedMessage(pending.message, addr))
+        self._queue_message(pending.message, addr)
 
     def _process_message_queue(self):
         while not self._outgoing_message_queue.empty():
@@ -198,15 +232,15 @@ class UDP:
 
     def _send_message(self, queued_msg):
         if queued_msg.optional_addr is not None:
-            self._emit_message(queued_msg.message, queued_msg.optional_addr)
+            self._queue_message(queued_msg.message, queued_msg.optional_addr)
         elif EnvVars.get_udp_broadcast():
-            self._emit_message(queued_msg.message)
+            self._queue_message(queued_msg.message)
         else:
             self._send_to_all_instances(queued_msg.message)
 
     def _send_to_all_instances(self, message):
         for hostname in self._cluster_instance_addressses:
-            self._emit_message(message, hostname)
+            self._queue_message(message, hostname)
 
     def _handle_send_failure(self, message_id: int):
         for pending_key, pending in list(self._pending_acks.items()):
@@ -342,7 +376,7 @@ class UDP:
         message.header.sender_instance_id = self._instance_id
         return message_id
 
-    def _queue_message(self, message, addr: str):
+    def _queue_message(self, message, addr: str = None):
         queued_msg = OutgoingQueuedMessage(message, addr)
         self._outgoing_message_queue.put(queued_msg)
 
