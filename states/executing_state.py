@@ -28,6 +28,7 @@ HEADER_SIZE = 12  # 4 bytes each for buffer flag, chunk id, instance index
 UDP_MTU = 1460
 
 class ExecutingSubState(Enum):
+    IDLING = auto()
     RECEIVING = auto()
     SENDING = auto()
 
@@ -56,12 +57,17 @@ class ExecutingStateHandler(StateHandler):
         self._current_buffer_type: int = -1
 
         self._chunk_lock = threading.Lock()
-        self._substate = ExecutingSubState.RECEIVING
+        self._substate = ExecutingSubState.IDLING
         self._receive_state = ReceiveState.RECEIVING
         self._send_state = SendState.PREAMBLE
         self._missing_chunk_ids = []
         self._current_distribution_instance_index: int = 0
         self._received_acks = set()  # Track which instances have ACKed
+        self._last_resend_check = 0
+        
+        # Window tracking
+        self._window_start = 0  # First chunk ID in current window
+        
         super().__init__(instance,
                          ClusterState.EXECUTING,
                          ClusterMessageType.DISTRIBUTE_BUFFER_BEGIN         |
@@ -73,6 +79,7 @@ class ExecutingStateHandler(StateHandler):
     async def handle_state(self, current_state: int) -> StateResult | None:
         if self._substate == ExecutingSubState.RECEIVING:
             if self._receive_state == ReceiveState.RECEIVING:
+
                 if self._received_buffers_from_all_instances:
                     logger.debug("All buffers received, sending ACK")
                     message = ClusterDistributeBufferAck()
@@ -141,27 +148,29 @@ class ExecutingStateHandler(StateHandler):
                 self._received_chunks = {}
                 self._substate = ExecutingSubState.RECEIVING
                 self._receive_state = ReceiveState.RECEIVING
+                self._last_resend_check = asyncio.get_event_loop().time()
+                self._window_start = 0
 
-        elif incoming_message.msg_type == ClusterMessageType.DISTRIBUTE_BUFFER_ALL_SENT:
-            total_chunks, expected_total = self._buffer_progress()
-            logger.debug("All chunks sent signal received. Have %d/%d chunks", total_chunks, expected_total)
-            if total_chunks == expected_total:
-                logger.info("All chunks received successfully, joining buffers")
-                for instance_index, instance_chunks in self._received_chunks.items():
-                    ordered_chunks = [instance_chunks[chunk_id] for chunk_id in self._expected_chunk_ids]
-                    self._received_buffers[instance_index] = b''.join(ordered_chunks)
-                self._current_distribution_instance_index = self._current_distribution_instance_index + 1
-                self._received_buffers_from_all_instances = True
-            else:
-                # Find missing chunk IDs
-                self._missing_chunk_ids = []
-                for chunk_id in self._expected_chunk_ids:
-                    for instance_chunks in self._received_chunks.values():
-                        if chunk_id not in instance_chunks:
-                            self._missing_chunk_ids.append(chunk_id)
-                
-                logger.warning("Missing %d chunks, requesting resend", len(self._missing_chunk_ids))
-                self._receive_state = ReceiveState.REQUESTING_RESEND
+        # elif incoming_message.msg_type == ClusterMessageType.DISTRIBUTE_BUFFER_ALL_SENT:
+        #     total_chunks, expected_total = self._buffer_progress()
+        #     logger.debug("All chunks sent signal received. Have %d/%d chunks", total_chunks, expected_total)
+        #     if total_chunks == expected_total:
+        #         logger.info("All chunks received successfully, joining buffers")
+        #         for instance_index, instance_chunks in self._received_chunks.items():
+        #             ordered_chunks = [instance_chunks[chunk_id] for chunk_id in self._expected_chunk_ids]
+        #             self._received_buffers[instance_index] = b''.join(ordered_chunks)
+        #         self._current_distribution_instance_index = self._current_distribution_instance_index + 1
+        #         self._received_buffers_from_all_instances = True
+        #     else:
+        #         # Find missing chunk IDs
+        #         self._missing_chunk_ids = []
+        #         for chunk_id in self._expected_chunk_ids:
+        #             for instance_chunks in self._received_chunks.values():
+        #                 if chunk_id not in instance_chunks:
+        #                     self._missing_chunk_ids.append(chunk_id)
+        #         
+        #         logger.warning("Missing %d chunks, requesting resend", len(self._missing_chunk_ids))
+        #         self._receive_state = ReceiveState.REQUESTING_RESEND
 
         elif incoming_message.msg_type == ClusterMessageType.DISTRIBUTE_BUFFER_RESEND:
             if self._substate != ExecutingSubState.SENDING:
