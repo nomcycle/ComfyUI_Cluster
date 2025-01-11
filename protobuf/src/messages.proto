@@ -78,7 +78,6 @@ message ClusterDistributeBufferBegin {
     ClusterBufferType buffer_type = 3;
     int32 buffer_byte_size = 4;
     int32 chunk_count = 5;
-    repeated uint32 chunk_ids = 6;
 }
 
 message ClusterDistributeBufferAck {

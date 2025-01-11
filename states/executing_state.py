@@ -39,6 +39,7 @@ class ReceiveState(Enum):
 class SendState(Enum):
     PREAMBLE = auto()
     SENDING = auto()
+    WAITING = auto()
 
 class ExecutingStateHandler(StateHandler):
     def __init__(self, instance: ThisInstance):
@@ -63,9 +64,9 @@ class ExecutingStateHandler(StateHandler):
         self._received_acks = set()  # Track which instances have ACKed
         super().__init__(instance,
                          ClusterState.EXECUTING,
-                         ClusterMessageType.DISTRIBUTE_BUFFER_BEGIN |
-                         ClusterMessageType.DISTRIBUTE_BUFFER_ALL_SENT |
-                         ClusterMessageType.DISTRIBUTE_BUFFER_RESEND |
+                         ClusterMessageType.DISTRIBUTE_BUFFER_BEGIN         |
+                         ClusterMessageType.DISTRIBUTE_BUFFER_RESEND        |
+                         ClusterMessageType.DISTRIBUTE_BUFFER_ALL_SENT      |
                          ClusterMessageType.DISTRIBUTE_BUFFER_ACK)
         logger.debug("Initialized ExecutingStateHandler")
 
@@ -97,7 +98,6 @@ class ExecutingStateHandler(StateHandler):
                 instance_index = EnvVars.get_instance_index()
                 byte_buffer_size = len(self._current_byte_buffer)
                 chunk_count = math.ceil(byte_buffer_size / (UDP_MTU - HEADER_SIZE))
-                chunk_ids = [self._generate_key() for _ in range(chunk_count)]
 
                 # Prepare distribution message
                 message = ClusterDistributeBufferBegin(
@@ -108,14 +108,13 @@ class ExecutingStateHandler(StateHandler):
                     instance_index=instance_index,
                     buffer_type=self._current_buffer_type,
                     buffer_byte_size=byte_buffer_size,
-                    chunk_count=chunk_count,
-                    chunk_ids=chunk_ids
+                    chunk_count=chunk_count
                 )
 
                 logger.debug("Sending buffer begin message")
                 await self._instance.cluster.udp_message_handler.send_and_wait_thread_safe(message)
                 self._send_state = SendState.SENDING
-                self._send_chunks(chunk_count, chunk_ids, self._current_byte_buffer)
+                self._send_chunks(chunk_count, list(range(chunk_count)), self._current_byte_buffer)
                 return
 
             elif self._send_state == SendState.SENDING:
@@ -125,6 +124,7 @@ class ExecutingStateHandler(StateHandler):
                 all_sent_msg.header.require_ack = True
                 all_sent_msg.instance_index = instance_index
                 await self._instance.cluster.udp_message_handler.send_and_wait_thread_safe(all_sent_msg)
+                self._send_state = SendState.WAITING
                 return
             
         await asyncio.sleep(0.1)
@@ -133,11 +133,11 @@ class ExecutingStateHandler(StateHandler):
     async def handle_message(self, current_state: int, incoming_message: IncomingMessage) -> StateResult | None:
         if incoming_message.msg_type == ClusterMessageType.DISTRIBUTE_BUFFER_BEGIN:
             distribute_buffer = ParseDict(incoming_message.message, ClusterDistributeBufferBegin())
-            logger.debug("Received buffer begin message, expecting %d chunks", len(distribute_buffer.chunk_ids))
+            logger.debug("Received buffer begin message, expecting %d chunks", distribute_buffer.chunk_count)
             with self._chunk_lock:
                 self._current_distribution_instance_index = distribute_buffer.instance_index
                 self._expected_buffer_type = distribute_buffer.buffer_type
-                self._expected_chunk_ids = distribute_buffer.chunk_ids
+                self._expected_chunk_ids = list(range(distribute_buffer.chunk_count))
                 self._received_chunks = {}
                 self._substate = ExecutingSubState.RECEIVING
                 self._receive_state = ReceiveState.RECEIVING
@@ -178,6 +178,7 @@ class ExecutingStateHandler(StateHandler):
                 chunk_id_bytes = chunk_id.to_bytes(4, byteorder='big')
                 chunk_data = self._sent_chunks[chunk_id]
                 self._emit_byte_chunk(buffer_flag, chunk_id_bytes, common_chunk_byte_header, chunk_data, incoming_message.sender_addr)
+                logger.debug(f"Resending chunk {chunk_id} ({i+1}/{len(resend_msg.missing_chunk_ids)})")
             
         elif incoming_message.msg_type == ClusterMessageType.DISTRIBUTE_BUFFER_ACK:
             logger.debug("Received buffer ACK")
@@ -220,7 +221,7 @@ class ExecutingStateHandler(StateHandler):
         self._received_chunks[instance_index][chunk_id] = chunk_data
         
         total_chunks, expected_total = self._buffer_progress()
-        # logger.debug(f"Received chunk {chunk_id} from instance {instance_index}. Total: {total_chunks}/{expected_total}")
+        logger.debug(f"Received chunk {chunk_id} from instance {instance_index}. Total: {total_chunks}/{expected_total}")
 
     def _generate_key(self) -> int:
         return random.randint(2**16 - 1, 2**32 - 1)
@@ -229,7 +230,7 @@ class ExecutingStateHandler(StateHandler):
         chunk_with_id = buffer_flag + chunk_id_bytes + common_chunk_byte_header + chunk_data
         self._instance.cluster.udp_buffer_handler.queue_byte_buffer(chunk_with_id, addr)
 
-    def _emite_byte_buffer(self, chunk_count: int, chunk_ids: [int], common_chunk_byte_header: [], byte_buffer, addr: str = None):
+    def _emite_byte_buffer(self, chunk_count: int, chunk_ids: [int], common_chunk_byte_header: bytes, byte_buffer, addr: str = None):
         logger.debug("Emitting %d chunks totalling in size: %d", chunk_count, len(byte_buffer))
 
         chunk_size = UDP_MTU - HEADER_SIZE
@@ -246,7 +247,7 @@ class ExecutingStateHandler(StateHandler):
             self._emit_byte_chunk(buffer_flag, chunk_id_bytes[i], common_chunk_byte_header, chunk_data, addr)
             chunk_id = chunk_ids[i]
             self._sent_chunks[chunk_id] = chunk_data
-            # logger.debug(f"Progress: {i+1}/{chunk_count} chunks emitted (chunk id: {chunk_id})")
+            logger.debug(f"Progress: {i+1}/{chunk_count} chunks emitted (chunk id: {chunk_id})")
 
         logger.debug("Finished emitting buffer.")
 

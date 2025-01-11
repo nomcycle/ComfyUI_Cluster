@@ -38,7 +38,7 @@ class InstanceLoop:
         logger.info("Cleaning up...")
 
         self._running = False
-        self._this_instance.cluster.udp.cancel_all_pending()
+        self._this_instance.cluster.udp_message_handler.cancel_all_pending()
 
         UDPSingleton.stop_threads()
         del self._this_instance.cluster.udp

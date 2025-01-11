@@ -43,18 +43,7 @@ class UDPMessageHandler(UDPBase):
                 return
 
             # logger.debug("(Received) UDP message from %s:%d:\n%s", incoming_msg.sender_addr, EnvVars.get_listen_port(), json.dumps(incoming_msg.message, indent=2))
-            logger.debug("(Received) UDP message from %s:%d\n"
-                        "\ttype: %s\n"
-                        "\tmessage_id: %s\n"
-                        "\tsender_instance_id: %s\n"
-                        "\tprocess_id: %s\n"
-                        "\trequire_ack: %s",
-                        incoming_msg.sender_addr, EnvVars.get_listen_port(),
-                        incoming_msg.msg_type_str,
-                        incoming_msg.message_id,
-                        incoming_msg.sender_instance_id,
-                        incoming_msg.process_id,
-                        incoming_msg.require_ack)
+            logger.debug(str(incoming_msg))
 
             await self._process_incoming_message(incoming_msg)
         except Exception as e:
