@@ -13,6 +13,7 @@ from .state_result import StateResult
 from .announce_state_handler import AnnounceInstanceStateHandler
 
 from ..instance import ThisInstance
+from ..queued import IncomingMessage
 
 class SignalHotReloadStateHandler(StateHandler):
     def __init__(self, instance: ThisInstance, on_hot_reload):
@@ -26,13 +27,13 @@ class SignalHotReloadStateHandler(StateHandler):
         hot_reload.timestamp = str(time.time())
 
         logger.info("Hot reload signal sent [timestamp=%s]", hot_reload.timestamp)
-        self._instance.cluster.udp.send_no_wait(hot_reload)
+        self._instance.cluster.udp_message_handler.send_no_wait(hot_reload)
 
         await asyncio.sleep(0)
         return StateResult(current_state, self, ClusterState.POPULATING, AnnounceInstanceStateHandler(self._instance))
 
-    def handle_message(self, current_state: int, msg_type: int, message, addr) -> StateResult:
-        signal_hot_reload = ParseDict(message, ClusterSignalHotReload())
+    async def handle_message(self, current_state: int, incoming_message: IncomingMessage) -> StateResult:
+        signal_hot_reload = ParseDict(incoming_message.message, ClusterSignalHotReload())
         timestamp = float(signal_hot_reload.timestamp)
         logger.info("Hot reload signal received [timestamp=%s]", timestamp)
         

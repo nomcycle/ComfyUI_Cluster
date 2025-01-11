@@ -21,6 +21,8 @@ from .state_result import StateResult
 from ..instance import ThisInstance
 from ..env_vars import EnvVars
 
+from ..queued import IncomingMessage
+
 # Constants
 HEADER_SIZE = 12  # 4 bytes each for buffer flag, chunk id, instance index
 UDP_MTU = 1460
@@ -49,15 +51,22 @@ class ExecutingStateHandler(StateHandler):
         self._received_buffers_from_all_instances: bool = False
 
         self._received_buffers: Dict[int, bytes] = {}  # instance_index -> joined buffer
+        self._current_byte_buffer = bytes
+        self._current_buffer_type: int = -1
 
         self._chunk_lock = threading.Lock()
         self._substate = ExecutingSubState.RECEIVING
         self._receive_state = ReceiveState.RECEIVING
         self._send_state = SendState.PREAMBLE
         self._missing_chunk_ids = []
-        self._current_distribution_instance_index = 0
+        self._current_distribution_instance_index: int = 0
         self._received_acks = set()  # Track which instances have ACKed
-        super().__init__(instance, ClusterState.EXECUTING, ClusterMessageType.DISTRIBUTE_BUFFER_BEGIN | ClusterMessageType.DISTRIBUTE_BUFFER_ALL_SENT | ClusterMessageType.DISTRIBUTE_BUFFER_RESEND | ClusterMessageType.DISTRIBUTE_BUFFER_ACK)
+        super().__init__(instance,
+                         ClusterState.EXECUTING,
+                         ClusterMessageType.DISTRIBUTE_BUFFER_BEGIN |
+                         ClusterMessageType.DISTRIBUTE_BUFFER_ALL_SENT |
+                         ClusterMessageType.DISTRIBUTE_BUFFER_RESEND |
+                         ClusterMessageType.DISTRIBUTE_BUFFER_ACK)
         logger.debug("Initialized ExecutingStateHandler")
 
     async def handle_state(self, current_state: int) -> StateResult | None:
@@ -69,7 +78,7 @@ class ExecutingStateHandler(StateHandler):
                     message.header.type = ClusterMessageType.DISTRIBUTE_BUFFER_ACK
                     message.header.require_ack = True
                     message.instance_index = EnvVars.get_instance_index() + 1
-                    await self._instance.cluster.udp.send_and_wait(message)
+                    await self._instance.cluster.udp_message_handler.send_and_wait(message)
                     self._receive_state = ReceiveState.WAITING_ALL_ACK
                     return
 
@@ -79,7 +88,7 @@ class ExecutingStateHandler(StateHandler):
                 resend_msg.header.require_ack = True
                 resend_msg.instance_index = EnvVars.get_instance_index()
                 resend_msg.missing_chunk_ids.extend(self._missing_chunk_ids)
-                await self._instance.cluster.udp.send_and_wait_thread_safe(resend_msg)
+                await self._instance.cluster.udp_message_handler.send_and_wait_thread_safe(resend_msg)
                 self._receive_state = ReceiveState.RECEIVING
                 return
 
@@ -104,7 +113,7 @@ class ExecutingStateHandler(StateHandler):
                 )
 
                 logger.debug("Sending buffer begin message")
-                await self._instance.cluster.udp.send_and_wait_thread_safe(message)
+                await self._instance.cluster.udp_message_handler.send_and_wait_thread_safe(message)
                 self._send_state = SendState.SENDING
                 self._send_chunks(chunk_count, chunk_ids, self._current_byte_buffer)
                 return
@@ -115,16 +124,16 @@ class ExecutingStateHandler(StateHandler):
                 all_sent_msg.header.type = ClusterMessageType.DISTRIBUTE_BUFFER_ALL_SENT
                 all_sent_msg.header.require_ack = True
                 all_sent_msg.instance_index = instance_index
-                await self._instance.cluster.udp.send_and_wait_thread_safe(all_sent_msg)
+                await self._instance.cluster.udp_message_handler.send_and_wait_thread_safe(all_sent_msg)
                 return
             
         await asyncio.sleep(0.1)
         return None
 
-    def handle_message(self, current_state: int, msg_type: int, message, addr: str) -> StateResult | None:
-        if msg_type == ClusterMessageType.DISTRIBUTE_BUFFER_BEGIN:
-            distribute_buffer = ParseDict(message, ClusterDistributeBufferBegin())
-            logger.debug(f"Received buffer begin message, expecting {len(distribute_buffer.chunk_ids)} chunks")
+    async def handle_message(self, current_state: int, incoming_message: IncomingMessage) -> StateResult | None:
+        if incoming_message.msg_type == ClusterMessageType.DISTRIBUTE_BUFFER_BEGIN:
+            distribute_buffer = ParseDict(incoming_message.message, ClusterDistributeBufferBegin())
+            logger.debug("Received buffer begin message, expecting %d chunks", len(distribute_buffer.chunk_ids))
             with self._chunk_lock:
                 self._current_distribution_instance_index = distribute_buffer.instance_index
                 self._expected_buffer_type = distribute_buffer.buffer_type
@@ -133,9 +142,9 @@ class ExecutingStateHandler(StateHandler):
                 self._substate = ExecutingSubState.RECEIVING
                 self._receive_state = ReceiveState.RECEIVING
 
-        elif msg_type == ClusterMessageType.DISTRIBUTE_BUFFER_ALL_SENT:
+        elif incoming_message.msg_type == ClusterMessageType.DISTRIBUTE_BUFFER_ALL_SENT:
             total_chunks, expected_total = self._buffer_progress()
-            logger.debug(f"All chunks sent signal received. Have {total_chunks}/{expected_total} chunks")
+            logger.debug("All chunks sent signal received. Have %d/%d chunks", total_chunks, expected_total)
             if total_chunks == expected_total:
                 logger.info("All chunks received successfully, joining buffers")
                 for instance_index, instance_chunks in self._received_chunks.items():
@@ -151,14 +160,14 @@ class ExecutingStateHandler(StateHandler):
                         if chunk_id not in instance_chunks:
                             self._missing_chunk_ids.append(chunk_id)
                 
-                logger.warning(f"Missing {len(self._missing_chunk_ids)} chunks, requesting resend")
+                logger.warning("Missing %d chunks, requesting resend", len(self._missing_chunk_ids))
                 self._receive_state = ReceiveState.REQUESTING_RESEND
 
-        elif msg_type == ClusterMessageType.DISTRIBUTE_BUFFER_RESEND:
+        elif incoming_message.msg_type == ClusterMessageType.DISTRIBUTE_BUFFER_RESEND:
             if self._substate != ExecutingSubState.SENDING:
                 return
-            resend_msg = ParseDict(message, ClusterDistributeBufferResend())
-            logger.debug(f"Received resend request for {len(resend_msg.missing_chunk_ids)} chunks")
+            resend_msg = ParseDict(incoming_message.message, ClusterDistributeBufferResend())
+            logger.debug("Received resend request for %d chunks", len(resend_msg.missing_chunk_ids))
             
             # Resend requested chunks
             instance_index = EnvVars.get_instance_index()
@@ -168,11 +177,11 @@ class ExecutingStateHandler(StateHandler):
             for i, chunk_id in enumerate(resend_msg.missing_chunk_ids):
                 chunk_id_bytes = chunk_id.to_bytes(4, byteorder='big')
                 chunk_data = self._sent_chunks[chunk_id]
-                self._emit_byte_chunk(buffer_flag, chunk_id_bytes, common_chunk_byte_header, chunk_data, addr)
+                self._emit_byte_chunk(buffer_flag, chunk_id_bytes, common_chunk_byte_header, chunk_data, incoming_message.sender_addr)
             
-        elif msg_type == ClusterMessageType.DISTRIBUTE_BUFFER_ACK:
+        elif incoming_message.msg_type == ClusterMessageType.DISTRIBUTE_BUFFER_ACK:
             logger.debug("Received buffer ACK")
-            ack_msg = ParseDict(message, ClusterDistributeBufferAck())
+            ack_msg = ParseDict(incoming_message.message, ClusterDistributeBufferAck())
             self._received_acks.add(ack_msg.instance_index)
             
             if self._received_buffers_from_all_instances and len(self._received_acks) == EnvVars.get_instance_count() - 1:
@@ -187,7 +196,7 @@ class ExecutingStateHandler(StateHandler):
         expected_total = len(self._expected_chunk_ids) * (EnvVars.get_instance_count() - 1)
         return total_chunks, expected_total
 
-    def handle_buffer(self, current_state: int, byte_buffer, addr: str) -> StateResult | None:
+    async def handle_buffer(self, current_state: int, byte_buffer, addr: str) -> StateResult | None:
         if self._received_buffers_from_all_instances:
             logger.error("Received buffer after all buffers already received")
             return
@@ -202,7 +211,7 @@ class ExecutingStateHandler(StateHandler):
         chunk_data = byte_buffer[12:]  # Skip first 12 bytes (4 buffer flag + 4 instance index + 4 chunk id)
     
         if not self._expected_chunk_ids or chunk_id not in self._expected_chunk_ids:
-            logger.warning(f"Received unexpected chunk id {chunk_id}")
+            logger.warning("Received unexpected chunk id %d", chunk_id)
             return None
             
         if instance_index not in self._received_chunks:
@@ -218,10 +227,10 @@ class ExecutingStateHandler(StateHandler):
 
     def _emit_byte_chunk(self, buffer_flag: bytes, chunk_id_bytes: bytes, common_chunk_byte_header: bytes, chunk_data: bytes, addr: str = None):
         chunk_with_id = buffer_flag + chunk_id_bytes + common_chunk_byte_header + chunk_data
-        self._instance.cluster.udp.queue_byte_buffer(chunk_with_id, addr)
+        self._instance.cluster.udp_buffer_handler.queue_byte_buffer(chunk_with_id, addr)
 
     def _emite_byte_buffer(self, chunk_count: int, chunk_ids: [int], common_chunk_byte_header: [], byte_buffer, addr: str = None):
-        logger.debug(f"Emitting {chunk_count} chunks totalling in size: {len(byte_buffer)}")
+        logger.debug("Emitting %d chunks totalling in size: %d", chunk_count, len(byte_buffer))
 
         chunk_size = UDP_MTU - HEADER_SIZE
 
@@ -239,7 +248,7 @@ class ExecutingStateHandler(StateHandler):
             self._sent_chunks[chunk_id] = chunk_data
             # logger.debug(f"Progress: {i+1}/{chunk_count} chunks emitted (chunk id: {chunk_id})")
 
-        logger.debug(f"Finished emitting buffer.")
+        logger.debug("Finished emitting buffer.")
 
     def _send_chunks(self, chunk_count, chunk_ids, byte_buffer):
         common_chunk_byte_header = EnvVars.get_instance_index().to_bytes(4, byteorder='big')
@@ -251,7 +260,7 @@ class ExecutingStateHandler(StateHandler):
         
         # Wait until it's our turn to distribute
         while self._current_distribution_instance_index < instance_index:
-            logger.debug(f"Awaiting our turn to distribute. Instance index currently distributing: {self._current_distribution_instance_index}, our instance index: {instance_index}")
+            logger.debug("Awaiting our turn to distribute. Instance index currently distributing: %d, our instance index: %d", self._current_distribution_instance_index, instance_index)
             await asyncio.sleep(0.5)
             
         self._current_byte_buffer = byte_buffer
@@ -286,7 +295,7 @@ class ExecutingStateHandler(StateHandler):
         # TODO: Current implementation assumes all tensors have same shape
         # Should validate shapes match before combining
 
-        logger.info(f"Distributing tensor of shape {tensor.shape}")
+        logger.info("Distributing tensor of shape %s", tensor.shape)
         # Get original shape and convert tensor to bytes
         original_shape = tensor.shape
         byte_buffer = tensor.numpy().tobytes()
@@ -308,5 +317,5 @@ class ExecutingStateHandler(StateHandler):
         batch_shape = (instance_count,) + original_shape
         batch_tensor = torch.from_numpy(array).reshape(batch_shape)
         
-        logger.info(f"Tensor distribution complete. Final shape: {batch_tensor.shape}")
+        logger.info("Tensor distribution complete. Final shape: %s", batch_tensor.shape)
         return batch_tensor

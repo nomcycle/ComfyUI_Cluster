@@ -3,6 +3,7 @@ import time
 
 from ..log import logger
 from ..instance import ThisInstance
+from ..queued import IncomingMessage
 
 class StateHandler:
     from .state_result import StateResult
@@ -15,7 +16,6 @@ class StateHandler:
         # logger.debug("State check: current=%d expected=%d", current_state, self._expected_state)
         if current_state != self._expected_state and not (current_state & self._expected_state):
             raise ValueError(f"Invalid state: {current_state} not in {self._expected_state}")
-            return False
         return True
 
     def check_message_type(self, msg_type: int):
@@ -28,8 +28,8 @@ class StateHandler:
     async def handle_state(self, current_state: int) -> StateResult | None:
         raise NotImplementedError("handle_state not implemented")
 
-    def handle_message(self, current_state: int, msg_type: int, message, addr) -> StateResult | None:
+    async def handle_message(self, current_state: int, incoming_message: IncomingMessage) -> StateResult | None:
         raise NotImplementedError("handle_message not implemented")
 
-    def handle_buffer(self, current_state: int, byte_buffer, addr: str) -> StateResult | None:
+    async def handle_buffer(self, current_state: int, byte_buffer, addr: str) -> StateResult | None:
         raise NotImplementedError("handle_buffer not implemented")

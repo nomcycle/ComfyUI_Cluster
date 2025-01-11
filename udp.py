@@ -10,7 +10,7 @@ from typing import Dict
 from google.protobuf.json_format import ParseDict, MessageToJson
 from .protobuf.messages_pb2 import (ClusterMessageType, ClusterAck)
 
-from .sender import UDPSender
+from .sender import UDPEmitter
 from .listener import UDPListener
 from .log import logger
 from .env_vars import EnvVars
@@ -100,7 +100,7 @@ class UDP:
         self._running: bool = True
 
         self._listener = UDPListener(EnvVars.get_listen_address(), EnvVars.get_listen_port(), self._handle_message, self._handle_buffer)
-        self._sender = UDPSender(EnvVars.get_send_port())
+        self._sender = UDPEmitter(EnvVars.get_send_port())
 
     def _start_threads(self):
         self._receive_thread = threading.Thread(target=self._receive_loop, daemon=True)
@@ -298,10 +298,10 @@ class UDP:
 
     def _emit_message(self, msg, addr: str = None):
         msg.header.process_id = os.getpid()
-        self._sender.send(msg, addr)
+        self._sender.emit_message(msg, addr)
 
     def _emit_byte_buffer(self, byte_buffer: bytes, addr: str = None):
-        self._sender.send_bytes(byte_buffer, addr)
+        self._sender.emit_buffer(byte_buffer, addr)
 
     def _send_ack(self, message_id: int, addr: str):
         logger.debug("Sending ACK for message %d to %s", message_id, addr)
