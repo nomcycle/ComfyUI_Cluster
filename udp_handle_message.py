@@ -111,6 +111,7 @@ class UDPMessageHandler(UDPBase):
 
         if not header:
             raise ValueError("Missing message header")
+        process_id = 1
         if EnvVars.get_single_host():
             process_id = header.get('processId', -1)
             if process_id == -1:
