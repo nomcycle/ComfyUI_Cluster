@@ -16,7 +16,7 @@ from .protobuf.messages_pb2 import (
 from .cluster import Cluster
 from .states.state_result import StateResult
 from .env_vars import EnvVars
-from .queued import IncomingMessage
+from .queued import IncomingMessage, IncomingPacket
 
 class QueuedMessage:
     def __init__(self, msg_type_str: str, message, addr: str):
@@ -86,13 +86,13 @@ class ThisInstance:
             self._current_state = state_result.next_state
             self._current_state_handler = state_result.next_state_handler
 
-    async def handle_buffer(self, buffer, addr: str):
+    async def handle_buffer(self, incoming_packet: IncomingPacket):
 
-        while self._current_state != ClusterState.EXECUTING:
-            logger.info("Instance is in state: %s, waiting for execution...", self._current_state)
-            continue
-
-        state_result = await self._current_state_handler.handle_buffer(self._current_state, buffer, addr)
+        if self._current_state != ClusterState.EXECUTING:
+            logger.debug("Instance not in EXECUTING state, dropping buffer")
+            return
+            
+        state_result = await self._current_state_handler.handle_buffer(self._current_state, incoming_packet.packet, incoming_packet.sender_addr)
         self.handle_state_result(state_result)
 
     async def handle_message(self, incoming_message: IncomingMessage):

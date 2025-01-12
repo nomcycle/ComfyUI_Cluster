@@ -33,10 +33,6 @@ class UDPSingleton:
 
             cls._incoming_thread.start()
             cls._outgoing_thread.start()
-
-            cls._handle_incoming_packet_thread = threading.Thread(target=cls._handle_incoming_packet_thread_fn, daemon=True)
-            cls._handle_incoming_packet_thread.start()
-
     @classmethod
     def stop_threads(cls):
         cls._running = False
@@ -68,33 +64,31 @@ class UDPSingleton:
         cls._outgoing_thread_callbacks.append(outgoing_callback)
 
     @classmethod 
-    def _handle_incoming_packet_thread_fn(cls):
-        cls._receive_async_loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(cls._receive_async_loop)
-        cls._receive_async_loop.run_until_complete(cls._handle_incoming_packet_loop())
-        cls._receive_async_loop.close()
-
-    @classmethod 
-    async def _handle_incoming_packet_loop(cls):
-        logger.info("Starting handle packet async loop.")
-        cls._listener = UDPListener(EnvVars.get_listen_address(), EnvVars.get_listen_port())
-        while cls._running:
-            incoming_packet = cls._incoming_queue.get()
-            for callback in cls._incoming_thread_callbacks:
-                try:
-                    await callback(incoming_packet)
-                except Exception as e:
-                    logger.error(f"Error in receive callback: {e}")
-            await asyncio.sleep(0.001)
-        logger.info("Exited handle packet async loop.")
+    def _dequeue_packet(cls):
+        incoming_packet = cls._incoming_queue.get()
+        return
 
     @classmethod 
     def _incoming_thread_fn(cls):
         logger.info("Starting incoming thread.")
         cls._listener = UDPListener(EnvVars.get_listen_address(), EnvVars.get_listen_port())
+        packet_count = 0
+        
         while cls._running:
             packet, sender_addr = cls._listener.poll()
+            incoming_packet = IncomingPacket(packet, sender_addr)
+            for callback in cls._incoming_thread_callbacks:
+                try:
+                    callback(incoming_packet)
+                except Exception as e:
+                    logger.error(f"Error in receive callback: {e}")
             cls._incoming_queue.put(IncomingPacket(packet, sender_addr))
+            
+            packet_count += 1
+            if packet_count >= 1000:
+                logger.info(f"Processed {packet_count} incoming packets")
+                packet_count = 0
+
         logger.info("Exited incoming thread.")
     
     @classmethod
@@ -105,33 +99,28 @@ class UDPSingleton:
                     callback()
                 except Exception as e:
                     logger.error(f"Error in send callback: {e}")
-            time.sleep(0.001)
 
     @classmethod
-    def process_batch_outgoing(cls, queue, emit_fn, batch_size=100):
+    def process_batch_outgoing(cls, queue, emit_fn):
         if queue.empty():
             return
 
-        start_time = time.time()
-        total_items = 0
+        MTU_SIZE = 1500  # Typical MTU size in bytes
+        MAX_BATCH_BYTES = 16 * 1024 * 1024  # 16MB in bytes
+        SLEEP_TIME = 0.5  # 10ms
         
         while not queue.empty():
-            # Process up to batch_size items as fast as possible
-            batch_count = 0
+            batch_bytes = 0
             batch_start = time.time()
             
-            while batch_count < batch_size and not queue.empty():
+            while batch_bytes < MAX_BATCH_BYTES and not queue.empty():
                 queued_item = queue.get()
                 emit_fn(queued_item)
                 queue.task_done()
-                batch_count += 1
-                total_items += 1
+                batch_bytes += MTU_SIZE
                 
-            # Only sleep between batches, not packets
-            batch_duration = time.time() - batch_start
-            # logger.debug("Batch processing took %.3fms", batch_duration * 1000)
-            
-            time.sleep(max(0.0001 - batch_duration, 0.0))
+            # Sleep for 10ms between 16MB batches
+            time.sleep(SLEEP_TIME)
     
 class ACKResult:
     def __init__(self, success: bool, error_msg: str = None):
@@ -139,12 +128,13 @@ class ACKResult:
         self.error_msg = error_msg
 
 class UDPBase(ABC):
-    def __init__(self):
+    def __init__(self, incoming_processed_packet_queue):
         self._outgoing_queue: queue.Queue = queue.Queue()
+        self._incoming_processed_packet_queue = incoming_processed_packet_queue
         self._emitter = UDPEmitter(EnvVars.get_send_port())
 
     @abstractmethod
-    async def _handle_incoming_packet(self, packet, sender_addr: str):
+    def _handle_incoming_packet(self, packet, sender_addr: str):
         """Abstract method for handling received messages"""
     
     @abstractmethod 

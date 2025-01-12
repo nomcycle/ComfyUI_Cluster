@@ -12,6 +12,7 @@ class UDPEmitter:
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.sock.settimeout(5)
+        self.sock.setblocking(False)
 
     def emit_message(self, message, addr: str = None):
         if addr is None:

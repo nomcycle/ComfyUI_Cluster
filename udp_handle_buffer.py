@@ -13,19 +13,18 @@ class ACKResult:
         self.error_msg = error_msg
 
 class UDPBufferHandler(UDPBase):
-    def __init__(self, handle_byte_buffer_callback, state_loop):
-        super().__init__()
+    def __init__(self, state_loop, incoming_processed_packet_queue):
+        super().__init__(incoming_processed_packet_queue)
         logger.info("Initializing UDP handler")
-        self._handle_byte_buffer_callback = handle_byte_buffer_callback
         self._state_loop = state_loop
         UDPSingleton.add_handle_incoming_packet_callback(self._handle_incoming_packet)
         UDPSingleton.add_outgoing_thread_callback(self._outgoing_thread_callback)
 
-    async def _handle_incoming_packet(self, incoming_packet: IncomingPacket):
+    def _handle_incoming_packet(self, incoming_packet: IncomingPacket):
         try:
             if not incoming_packet.get_is_buffer():
                 return
-            await self._process_buffer(incoming_packet.packet, incoming_packet.sender_addr)
+            self._process_buffer(incoming_packet)
         except Exception as e:
             logger.error("Exception occurred while trying to handle incoming packet as a buffer: %s\n%s", e, traceback.format_exc())
     
@@ -41,10 +40,8 @@ class UDPBufferHandler(UDPBase):
     def queue_byte_buffer(self, byte_buffer, addr: str = None):
         self._outgoing_queue.put(OutgoingPacket(byte_buffer, addr))
 
-    async def _process_buffer(self, byte_buffer: bytes, addr: str):
-        result = await self._handle_byte_buffer_callback(byte_buffer, addr)
-        if asyncio.iscoroutine(result):
-            await result
+    def _process_buffer(self, incoming_packet: IncomingPacket):
+        self._incoming_processed_packet_queue.put(incoming_packet)
 
     def _emit_byte_buffer(self, byte_buffer: bytes, addr: str = None):
         self._emitter.emit_buffer(byte_buffer, addr)

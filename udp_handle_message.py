@@ -23,18 +23,17 @@ class ACKResult:
         self.error_msg = error_msg
 
 class UDPMessageHandler(UDPBase):
-    def __init__(self, handle_message_callback, state_loop):
-        super().__init__()
+    def __init__(self, state_loop, incoming_processed_packet_queue):
+        super().__init__(incoming_processed_packet_queue)
         logger.info("Initializing UDP handler")
         self._instance_id = EnvVars.get_instance_index()
         self._pending_acks: Dict[int, PendingMessage] = {}
-        self._handle_message_callback = handle_message_callback
         self._state_loop = state_loop
         self._local_ips: [str] = None
         UDPSingleton.add_outgoing_thread_callback(self._outgoing_thread_callback)
         UDPSingleton.add_handle_incoming_packet_callback(self._handle_incoming_packet)
 
-    async def _handle_incoming_packet(self, incoming_packet: IncomingPacket):
+    def _handle_incoming_packet(self, incoming_packet: IncomingPacket):
         try:
             if incoming_packet.get_is_buffer():
                 return
@@ -45,7 +44,7 @@ class UDPMessageHandler(UDPBase):
             # logger.debug("(Received) UDP message from %s:%d:\n%s", incoming_msg.sender_addr, EnvVars.get_listen_port(), json.dumps(incoming_msg.message, indent=2))
             logger.debug(str(incoming_msg))
 
-            await self._process_incoming_message(incoming_msg)
+            self._process_incoming_message(incoming_msg)
         except Exception as e:
             logger.error("Receive loop error: %s\n%s", e, traceback.format_exc())
     
@@ -70,25 +69,19 @@ class UDPMessageHandler(UDPBase):
         current_time = time.time()
         for message_id, pending in list(self._pending_acks.items()):
             for key, pending_ack in list(pending.pending_acks.items()):
-                if pending.should_retry(pending_ack.addr, current_time):
-                    if pending.has_exceeded_retries(pending_ack.addr):
-                        self._handle_max_retries_exceeded(message_id, pending)
+                if pending.should_retry(key, current_time):
+                    if pending.has_exceeded_retries(key):
+                        logger.warning("Max retries exceeded - msg %s to %s", message_id, key)
+                        del pending.pending_acks[key]
+                        
+                        if len(pending.pending_acks) == 0:
+                            del self._pending_acks[message_id]
+                            if not pending.future.done():
+                                self._complete_future(pending.future, False, "Max retries exceeded")
                     else:
-                        self._retry_message(message_id, pending)
-
-    def _handle_max_retries_exceeded(self, message_id: int, pending: PendingInstanceMessage):
-        logger.warning("Max retries exceeded - msg %s to %s", message_id, pending.addr)
-        del pending.pending_acks[pending.addr]
-        
-        if len(pending.pending_acks) == 0:
-            del self._pending_acks[message_id]
-            if not pending.future.done():
-                self._complete_future(pending.future, False, "Max retries exceeded")
-
-    def _retry_message(self, message_id: int, pending: PendingInstanceMessage):
-        retry_count = pending.increment_retry(pending.addr)
-        logger.info("Retry %s/%s - msg %s to %s", retry_count, pending.MAX_RETRIES, message_id, pending.addr)
-        self._queue_outgoing(pending.message, pending.addr)
+                        retry_count = pending.increment_retry(key)
+                        logger.info("Retry %s/%s - msg %s to %s", retry_count, pending.MAX_RETRIES, message_id, key)
+                        self._queue_outgoing(pending.message, pending_ack.addr)
 
     def _send_message(self, queued_msg):
         if queued_msg.optional_addr is not None:
@@ -155,18 +148,16 @@ class UDPMessageHandler(UDPBase):
             require_ack,
             message)
 
-    async def _process_incoming_message(self, incoming_msg: IncomingMessage):
+    def _process_incoming_message(self, incoming_msg: IncomingMessage):
         if incoming_msg.msg_type == ClusterMessageType.ACK:
             self._handle_ack(incoming_msg)
             return
-        await self._handle_non_ack_message(incoming_msg)
+        self._handle_non_ack_message(incoming_msg)
 
-    async def _handle_non_ack_message(self, incoming_msg: IncomingMessage):
+    def _handle_non_ack_message(self, incoming_msg: IncomingMessage):
         if incoming_msg.require_ack:
             self._send_ack(incoming_msg.message_id, incoming_msg.sender_addr)
-        result = self._handle_message_callback(incoming_msg)
-        if asyncio.iscoroutine(result):
-            await result
+        self._incoming_processed_packet_queue.put(incoming_msg)
 
     def _emit_message(self, msg, addr: str = None):
         msg.header.process_id = os.getpid()

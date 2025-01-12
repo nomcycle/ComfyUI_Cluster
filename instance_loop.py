@@ -1,6 +1,7 @@
 import asyncio
 import uuid
 import threading
+import queue
 
 from .log import logger
 from .env_vars import EnvVars
@@ -30,9 +31,17 @@ class InstanceLoop:
 
         self._running = True
         self._state_loop = None
+        self._packet_loop = None
         self._state_lock = threading.Lock()
+
         self._state_thread = threading.Thread(target=self._run_state_loop, daemon=True)
+        self._packet_thread = threading.Thread(target=self._run_packet_loop, daemon=True)
+
+        self._incoming_processed_message_queue = queue.Queue()
+        self._incoming_processed_buffer_queue = queue.Queue()
+
         self._state_thread.start()
+        self._packet_thread.start()
 
     def _on_hot_reload(self):
         logger.info("Cleaning up...")
@@ -41,7 +50,8 @@ class InstanceLoop:
         self._this_instance.cluster.udp_message_handler.cancel_all_pending()
 
         UDPSingleton.stop_threads()
-        del self._this_instance.cluster.udp
+        del self._this_instance.cluster.udp_buffer_handler
+        del self._this_instance.cluster.udp_message_handler
         del self._this_instance.cluster
         del self._this_instance
 
@@ -58,8 +68,10 @@ class InstanceLoop:
                 self._this_instance = ThisLeaderInstance(self._cluster, 'localhost', ClusterRole.LEADER, self._on_hot_reload)
             else:
                 self._this_instance = ThisFollowerInstance(self._cluster, 'localhost', ClusterRole.FOLLOWER, self._on_hot_reload)
-            udp_message_handler =  UDPMessageHandler(self._this_instance.handle_message, self._state_loop)
-            udp_buffer_handler =  UDPBufferHandler( self._this_instance.handle_buffer, self._state_loop)
+
+            udp_message_handler =  UDPMessageHandler(self._state_loop, self._incoming_processed_message_queue)
+            udp_buffer_handler =  UDPBufferHandler(self._state_loop, self._incoming_processed_buffer_queue)
+
             self._cluster.set_udp_message_handler(udp_message_handler)
             self._cluster.set_udp_buffer_handler(udp_buffer_handler)
 
@@ -75,6 +87,35 @@ class InstanceLoop:
                 await self._this_instance.tick_state()
         except Exception as e:
             logger.error("State loop failed: %s", str(e), exc_info=True)
+            raise
+
+        logger.info("Exited state loop.")
+
+    def _run_packet_loop(self):
+        try:
+            self._packet_loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(self._packet_loop)
+            self._packet_loop.run_until_complete(self._packet_loop_async())
+        finally:
+            self._packet_loop.close()
+
+    async def _packet_loop_async(self):
+        try:
+            while self._running:
+                while not self._incoming_processed_message_queue.empty():
+                    incoming_message = self._incoming_processed_message_queue.get()
+                    await self._this_instance.handle_message(incoming_message)
+                    self._incoming_processed_message_queue.task_done()
+                    
+                while not self._incoming_processed_buffer_queue.empty():
+                    incoming_buffer = self._incoming_processed_buffer_queue.get()
+                    await self._this_instance.handle_buffer(incoming_buffer)
+                    self._incoming_processed_buffer_queue.task_done()
+                    
+                await asyncio.sleep(0.001)  # Small sleep to prevent busy waiting
+                
+        except Exception as e:
+            logger.error("Packet loop failed: %s", str(e), exc_info=True)
             raise
 
         logger.info("Exited state loop.")
