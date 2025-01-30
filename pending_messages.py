@@ -2,10 +2,9 @@ import time
 from typing import Dict
 
 class PendingInstanceMessage:
-    def __init__(self, timestamp: float, retry_count: int, addr: str, instance_id: int | None = None):
+    def __init__(self, timestamp: float, retry_count: int, instance_id: int | None = None):
         self.timestamp: float = timestamp
         self.retry_count: int = retry_count
-        self.addr: str = addr
         self.instance_id: int | None = instance_id
 
 class PendingMessage:

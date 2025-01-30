@@ -46,6 +46,10 @@ class UDPSingleton:
     def set_cluster_instance_addresses(cls, addresses: [(int, str)]):
         logger.info("Setting cluster addresses: %s", addresses)
         cls._cluster_instance_addressses = addresses
+
+    @classmethod
+    def get_cluster_instance_address(cls, instance_id: int) -> str:
+        return cls._cluster_instance_addressses[instance_id][1]
     
     @classmethod
     def get_cluster_instance_addresses(cls):
@@ -83,14 +87,12 @@ class UDPSingleton:
                     callback(incoming_packet)
                 except Exception as e:
                     logger.error(f"Error in receive callback: {e}")
-                time.sleep(0.0001)
             cls._incoming_queue.put(IncomingPacket(packet, sender_addr))
             
             packet_count += 1
             if packet_count >= 1000:
                 logger.info(f"Processed {packet_count} incoming packets")
                 packet_count = 0
-            time.sleep(0.0001)
 
         logger.info("Exited incoming thread.")
     
@@ -99,37 +101,28 @@ class UDPSingleton:
         while cls._running:
             for callback in cls._outgoing_thread_callbacks:
                 try:
+                    start_time = time.time()
                     callback()
+                    elapsed_time = time.time() - start_time
+                    if elapsed_time > 0.01:  # Only log if above 10ms
+                        logger.debug(f"Outgoing callback took {elapsed_time:.3f} seconds")
                 except Exception as e:
                     logger.error(f"Error in send callback: {e}")
-                time.sleep(0.0001)
-            time.sleep(0.0001)
 
     @classmethod
-    def process_batch_outgoing(cls, queue, emit_fn):
-        if queue.empty():
+    def process_batch_outgoing(cls, outgoing_queue: queue.Queue, emit_fn):
+        if outgoing_queue.empty():
             return
-
-        MTU_SIZE = 1500  # Typical MTU size in bytes
-        MAX_BATCH_BYTES = 16 * 1024 * 1024  # 16MB in bytes
-        SLEEP_TIME = 0.5  # 10ms
         
-        while not queue.empty():
-            batch_bytes = 0
-            batch_start = time.time()
+        while not outgoing_queue.empty():
+            queued_item = outgoing_queue.get()
+            emit_fn(queued_item)
+            outgoing_queue.task_done()
+            time.sleep(0.0001)
             
-            while batch_bytes < MAX_BATCH_BYTES and not queue.empty():
-                queued_item = queue.get()
-                emit_fn(queued_item)
-                queue.task_done()
-                batch_bytes += MTU_SIZE
-                time.sleep(0.001)
-                
-            # Sleep for 10ms between 16MB batches
-            time.sleep(SLEEP_TIME)
     
 class ACKResult:
-    def __init__(self, success: bool, error_msg: str = None):
+    def __init__(self, success: bool, error_msg: str | None = None):
         self.success = success
         self.error_msg = error_msg
 

@@ -14,7 +14,7 @@ class UDPEmitter:
         self.sock.settimeout(5)
         # self.sock.setblocking(False)
 
-    def emit_message(self, message, addr: str = None):
+    def emit_message(self, message: object, addr: str | None = None):
         if addr is None:
             addr = '255.255.255.255'
 
@@ -33,7 +33,7 @@ class UDPEmitter:
                     message.header.require_ack)
         self.sock.sendto(msg_json.encode(), (addr, self.port))
 
-    def emit_buffer(self, bytes, addr:str = None):
+    def emit_buffer(self, bytes: bytes, addr: str | None = None):
         if addr is None:
             addr = '255.255.255.255'
 

@@ -37,18 +37,25 @@ class UDPBufferHandler(UDPBase):
         except Exception as e:
             logger.error("Send loop error: %s\n%s", e, traceback.format_exc())
     
-    def queue_byte_buffer(self, byte_buffer, addr: str = None):
+    def queue_byte_buffer(self, byte_buffer, instance_id: int | None = None):
+        addr = None
+        if instance_id is not None:
+            addr = UDPSingleton.get_cluster_instance_address(instance_id)
         self._outgoing_queue.put(OutgoingPacket(byte_buffer, addr))
+
+        queue_size = self._outgoing_queue.qsize()
+        if queue_size % 100 == 0:
+            logger.debug('Outgoing buffer queue size: %s', queue_size)
 
     def _process_buffer(self, incoming_packet: IncomingPacket):
         self._incoming_processed_packet_queue.put(incoming_packet)
 
-    def _emit_byte_buffer(self, byte_buffer: bytes, addr: str = None):
+    def _emit_byte_buffer(self, byte_buffer: bytes, addr: str | None = None):
         self._emitter.emit_buffer(byte_buffer, addr)
         if addr is not None:
             self._emitter.emit_buffer(byte_buffer, addr)
         elif EnvVars.get_udp_broadcast():
             self._emitter.emit_buffer(byte_buffer)
         else: # Loop through each hostname and emit message directly.
-            for hostname in UDPSingleton.get_cluster_instance_addresses():
+            for instance_id, hostname in UDPSingleton.get_cluster_instance_addresses():
                 self._emitter.emit_buffer(byte_buffer, hostname)

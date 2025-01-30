@@ -209,14 +209,14 @@ class ExecutingStateHandler(StateHandler):
                 message.header.require_ack = True
                 message.instance_index = EnvVars.get_instance_index()
                 message.missing_chunk_ids = missing_bytes
-                await self._instance.cluster.udp_message_handler.send_and_wait(message, current_distributing_instance_addr)
+                await self._instance.cluster.udp_message_handler.send_and_wait(message, self._current_distribution_instance_index)
 
             elif not self._instance_data.get_received_all_chunks(self._current_distribution_instance_index):
                 message = ClusterDistributeBufferAck()
                 message.header.type = ClusterMessageType.DISTRIBUTE_BUFFER_ACK
                 message.header.require_ack = True
                 message.instance_index = EnvVars.get_instance_index()
-                await self._instance.cluster.udp_message_handler.send_and_wait_thread_safe(message, current_distributing_instance_addr)
+                await self._instance.cluster.udp_message_handler.send_and_wait_thread_safe(message, self._current_distribution_instance_index)
 
                 logger.info(f"All chunks received from instance {self._current_distribution_instance_index}, joining buffers")
                 chunks = self._instance_data.get_dependency_chunks(self._current_distribution_instance_index)
@@ -301,9 +301,9 @@ class ExecutingStateHandler(StateHandler):
                 total_chunks, expected_total = self._buffer_progress(sender_instance)
                 logger.debug(f"Received chunk {chunk_id} from instance {sender_instance}. Total: {total_chunks}/{expected_total}")
 
-    def _emit_byte_chunk(self, buffer_flag: bytes, chunk_id_bytes: bytes, chunk_data: bytes, addr: str = None):
+    def _emit_byte_chunk(self, buffer_flag: bytes, chunk_id_bytes: bytes, chunk_data: bytes, instance_id: int | None = None):
         chunk_with_id = buffer_flag + chunk_id_bytes + chunk_data
-        self._instance.cluster.udp_buffer_handler.queue_byte_buffer(chunk_with_id, addr)
+        self._instance.cluster.udp_buffer_handler.queue_byte_buffer(chunk_with_id, instance_id)
 
     async def _emit_all_sent_message(self):
         instance_index = EnvVars.get_instance_index()
