@@ -225,8 +225,9 @@ class UDPMessageHandler(UDPBase):
             await asyncio.sleep(0)
             return ACKResult(True, None)
 
-        message_id = self.send_no_wait(message, addr)
+        message_id = self._prepare_message(message)
         pending_msg = self._create_pending_message(message_id, message, addr)
+        self._queue_outgoing(message, addr)
         result = await pending_msg.future
 
         if not result.success:

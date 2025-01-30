@@ -58,6 +58,9 @@ class InstanceLoop:
         global instance_loop
         del instance_loop
 
+    def buffer_queue_empty(self) -> bool:
+        return self._incoming_processed_buffer_queue.empty()
+
     def _run_state_loop(self):
         try:
             self._state_loop = asyncio.new_event_loop()
@@ -65,9 +68,9 @@ class InstanceLoop:
 
             self._cluster = Cluster()
             if self._instance_role == ClusterRole.LEADER:
-                self._this_instance = ThisLeaderInstance(self._cluster, 'localhost', ClusterRole.LEADER, self._on_hot_reload)
+                self._this_instance = ThisLeaderInstance(self._cluster, self, 'localhost', ClusterRole.LEADER, self._on_hot_reload)
             else:
-                self._this_instance = ThisFollowerInstance(self._cluster, 'localhost', ClusterRole.FOLLOWER, self._on_hot_reload)
+                self._this_instance = ThisFollowerInstance(self._cluster, self, 'localhost', ClusterRole.FOLLOWER, self._on_hot_reload)
 
             udp_message_handler =  UDPMessageHandler(self._state_loop, self._incoming_processed_message_queue)
             udp_buffer_handler =  UDPBufferHandler(self._state_loop, self._incoming_processed_buffer_queue)
@@ -85,6 +88,7 @@ class InstanceLoop:
         try:
             while self._running:
                 await self._this_instance.tick_state()
+                await asyncio.sleep(0.001)
         except Exception as e:
             logger.error("State loop failed: %s", str(e), exc_info=True)
             raise
@@ -102,15 +106,15 @@ class InstanceLoop:
     async def _packet_loop_async(self):
         try:
             while self._running:
-                while not self._incoming_processed_message_queue.empty():
-                    incoming_message = self._incoming_processed_message_queue.get()
-                    await self._this_instance.handle_message(incoming_message)
-                    self._incoming_processed_message_queue.task_done()
-                    
                 while not self._incoming_processed_buffer_queue.empty():
                     incoming_buffer = self._incoming_processed_buffer_queue.get()
                     await self._this_instance.handle_buffer(incoming_buffer)
                     self._incoming_processed_buffer_queue.task_done()
+
+                while not self._incoming_processed_message_queue.empty():
+                    incoming_message = self._incoming_processed_message_queue.get()
+                    await self._this_instance.handle_message(incoming_message)
+                    self._incoming_processed_message_queue.task_done()
                     
                 await asyncio.sleep(0.001)  # Small sleep to prevent busy waiting
                 

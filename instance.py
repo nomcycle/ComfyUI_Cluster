@@ -17,6 +17,8 @@ from .cluster import Cluster
 from .states.state_result import StateResult
 from .env_vars import EnvVars
 from .queued import IncomingMessage, IncomingPacket
+if TYPE_CHECKING:
+    from .instance_loop import InstanceLoop
 
 class QueuedMessage:
     def __init__(self, msg_type_str: str, message, addr: str):
@@ -32,8 +34,9 @@ class OtherInstance:
         self.instance_id = instance_id
 
 class ThisInstance:
-    def __init__(self, cluster: Cluster, address: str, role: int, on_hot_reload):
+    def __init__(self, cluster: Cluster, instance_loop: 'InstanceLoop', address: str, role: int, on_hot_reload):
         self.cluster = cluster
+        self._instance_loop = instance_loop
         self.all_accounted_for: bool = False
         self.address: str = address
         self.role: int = role
@@ -49,6 +52,9 @@ class ThisInstance:
 
         state_result: StateResult = await self._current_state_handler.handle_state(self._current_state)
         self.handle_state_result(state_result)
+
+    def buffer_queue_empty(self) -> bool:
+        return self._instance_loop.buffer_queue_empty()
 
     def _build_url (self, addr: str, endpoint: str):
         return f"http://{addr}:{EnvVars.get_comfy_port()}/{endpoint}"
@@ -78,6 +84,7 @@ class ThisInstance:
         return await executing_state_handler.distribute_tensor(tensor)
 
     def handle_state_result(self, state_result):
+        # logger.info('Tick handle_state_result')
         if state_result is None or state_result.next_state is None:
             return
 
@@ -87,15 +94,16 @@ class ThisInstance:
             self._current_state_handler = state_result.next_state_handler
 
     async def handle_buffer(self, incoming_packet: IncomingPacket):
+        # logger.info('Tick handle_buffer')
 
         if self._current_state != ClusterState.EXECUTING:
             logger.debug("Instance not in EXECUTING state, dropping buffer")
             return
-            
         state_result = await self._current_state_handler.handle_buffer(self._current_state, incoming_packet.packet, incoming_packet.sender_addr)
         self.handle_state_result(state_result)
 
     async def handle_message(self, incoming_message: IncomingMessage):
+        # logger.info('Tick handle_message')
 
         if incoming_message.msg_type == ClusterMessageType.SIGNAL_HOT_RELOAD:
             await self._signal_hot_reload_state_handler.handle_message(self._current_state, incoming_message)
@@ -108,12 +116,12 @@ class ThisInstance:
         self.handle_state_result(state_result)
 
 class ThisLeaderInstance(ThisInstance):
-    def __init__(self, cluster: Cluster, address: str, role: int, on_hot_reload):
-        super().__init__(cluster, address, role, on_hot_reload)
+    def __init__(self, cluster: Cluster, instance_loop: 'InstanceLoop',address: str, role: int, on_hot_reload):
+        super().__init__(cluster, instance_loop, address, role, on_hot_reload)
 
 class ThisFollowerInstance(ThisInstance):
-    def __init__(self, cluster: Cluster, address: str, role: int, on_hot_reload):
-        super().__init__(cluster, address, role, on_hot_reload)
+    def __init__(self, cluster: Cluster, instance_loop: 'InstanceLoop',address: str, role: int, on_hot_reload):
+        super().__init__(cluster, instance_loop, address, role, on_hot_reload)
 
 class OtherLeaderInstance(OtherInstance):
     def __init__(self, address: str, role: int, instance_id: int):

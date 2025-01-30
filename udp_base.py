@@ -33,6 +33,7 @@ class UDPSingleton:
 
             cls._incoming_thread.start()
             cls._outgoing_thread.start()
+
     @classmethod
     def stop_threads(cls):
         cls._running = False
@@ -82,12 +83,14 @@ class UDPSingleton:
                     callback(incoming_packet)
                 except Exception as e:
                     logger.error(f"Error in receive callback: {e}")
+                time.sleep(0.0001)
             cls._incoming_queue.put(IncomingPacket(packet, sender_addr))
             
             packet_count += 1
             if packet_count >= 1000:
                 logger.info(f"Processed {packet_count} incoming packets")
                 packet_count = 0
+            time.sleep(0.0001)
 
         logger.info("Exited incoming thread.")
     
@@ -99,6 +102,8 @@ class UDPSingleton:
                     callback()
                 except Exception as e:
                     logger.error(f"Error in send callback: {e}")
+                time.sleep(0.0001)
+            time.sleep(0.0001)
 
     @classmethod
     def process_batch_outgoing(cls, queue, emit_fn):
@@ -118,6 +123,7 @@ class UDPSingleton:
                 emit_fn(queued_item)
                 queue.task_done()
                 batch_bytes += MTU_SIZE
+                time.sleep(0.001)
                 
             # Sleep for 10ms between 16MB batches
             time.sleep(SLEEP_TIME)

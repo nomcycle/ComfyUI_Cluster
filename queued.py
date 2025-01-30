@@ -99,7 +99,7 @@ class IncomingMessage:
             buffer_resend = ParseDict(self.message, ClusterDistributeBufferResend())
             return (f"\nClusterDistributeBufferResend:\n"
                    f"\tinstance_index={buffer_resend.instance_index},\n"
-                   f"\tmissing_chunk_ids={buffer_resend.missing_chunk_ids},\n"
+                   # f"\tmissing_chunk_ids={buffer_resend.missing_chunk_ids},\n"
                    f"{header}")
         elif self.msg_type == ClusterMessageType.DISTRIBUTE_BUFFER_ACK:
             buffer_ack = ParseDict(self.message, ClusterDistributeBufferAck())
