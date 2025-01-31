@@ -95,6 +95,10 @@ class IncomingMessage:
             return (f"\nClusterDistributeBufferAllSent:\n"
                    f"\tinstance_index={buffer_all_sent.instance_index},\n"
                    f"{header}")
+        elif self.msg_type == ClusterMessageType.DISTRIBUTE_BUFFER_NEXT:
+            distribute_prompt = ParseDict(self.message, ClusterDistributePrompt())
+            return (f"\nClusterDistributeBufferNext:\n"
+                   f"{header}")
         elif self.msg_type == ClusterMessageType.DISTRIBUTE_BUFFER_RESEND:
             buffer_resend = ParseDict(self.message, ClusterDistributeBufferResend())
             return (f"\nClusterDistributeBufferResend:\n"
@@ -106,6 +110,8 @@ class IncomingMessage:
             return (f"\nClusterDistributeBufferAck:\n"
                    f"\tinstance_index={buffer_ack.instance_index},\n"
                    f"{header}")
+        else:
+            return f"Unable to pretty print message, unknown message type: {self.msg_type_str}"
 
 class OutgoingPacket:
     def __init__(self, packet, optional_addr: str = None):

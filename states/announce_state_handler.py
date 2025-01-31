@@ -57,7 +57,9 @@ class AnnounceInstanceStateHandler(StateHandler):
 
             if self._instance.cluster.all_accounted_for():
                 logger.info("All cluster instances connected (%d total)", self._instance.cluster.instance_count)
-                addresses = [(instance_id, instance.address) for instance_id, instance in self._instance.cluster.instances.items()]
+                addresses = []
+                addresses.append((EnvVars.get_instance_index(), EnvVars.get_listen_address()))
+                addresses.extend(sorted([(instance_id, instance.address) for instance_id, instance in self._instance.cluster.instances.items()]))
                 UDPSingleton.set_cluster_instance_addresses(addresses)
 
         other_instance.all_accounted_for = announce_instance.all_accounted_for

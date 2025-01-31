@@ -42,7 +42,7 @@ class UDPMessageHandler(UDPBase):
                 return
 
             # logger.debug("(Received) UDP message from %s:%d:\n%s", incoming_msg.sender_addr, EnvVars.get_listen_port(), json.dumps(incoming_msg.message, indent=2))
-            logger.debug(incoming_msg)
+            logger.debug(str(incoming_msg))
 
             self._process_incoming_message(incoming_msg)
         except Exception as e:
@@ -68,19 +68,19 @@ class UDPMessageHandler(UDPBase):
     def _process_pending_messages(self):
         current_time = time.time()
         for message_id, pending in list(self._pending_acks.items()):
-            for key, pending_ack in list(pending.pending_acks.items()):
-                if pending.should_retry(key, current_time):
-                    if pending.has_exceeded_retries(key):
-                        logger.warning("Max retries exceeded - msg %s to %s", message_id, key)
-                        del pending.pending_acks[key]
+            for instance_id, pending_ack in list(pending.pending_acks.items()):
+                if pending.should_retry(instance_id, current_time):
+                    if pending.has_exceeded_retries(instance_id):
+                        logger.warning("Max retries exceeded - msg %s to %s", message_id, instance_id)
+                        del pending.pending_acks[instance_id]
                         
                         if len(pending.pending_acks) == 0:
                             del self._pending_acks[message_id]
                             if not pending.future.done():
                                 self._complete_future(pending.future, False, "Max retries exceeded")
                     else:
-                        retry_count = pending.increment_retry(key)
-                        logger.info("Retry %s/%s - msg %s to %s", retry_count, pending.MAX_RETRIES, message_id, key)
+                        retry_count = pending.increment_retry(instance_id)
+                        logger.info("Reattempting to send msg: %s to instance: %s (%s/%s)", message_id, instance_id, retry_count, pending.MAX_RETRIES)
                         self._queue_outgoing_to_instance(pending.message, pending_ack.instance_id)
 
     def _send_message(self, queued_msg):
@@ -128,9 +128,12 @@ class UDPMessageHandler(UDPBase):
             return None
         if sender_instance_id == self._instance_id:
             return None
-        msg_type_str = header.get('type', -1)
+        msg_type_str = header.get('type', '')
+        if msg_type_str == '':
+            logger.error("Unknown message type")
+            return None
         msg_type = ClusterMessageType.Value(msg_type_str)
-        if msg_type == -1:
+        if msg_type < 0:
             logger.error("Unknown message type")
             return None
         message_id = header.get('messageId', -1)
@@ -206,7 +209,9 @@ class UDPMessageHandler(UDPBase):
         if instance_id is not None:
             pending_msg.pending_acks[instance_id] = PendingInstanceMessage(time.time(), 0, instance_id)
         elif EnvVars.get_udp_broadcast():
-            for instance_id, instance_addr in UDPSingleton.get_cluster_instance_addresses():
+            for instance_id, _ in UDPSingleton.get_cluster_instance_addresses():
+                if instance_id == self._instance_id:
+                    continue
                 pending_msg.pending_acks[instance_id] = PendingInstanceMessage(time.time(), 0, instance_id)
         self._pending_acks[message_id] = pending_msg
 

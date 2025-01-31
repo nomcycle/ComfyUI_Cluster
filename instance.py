@@ -60,6 +60,9 @@ class ThisInstance:
         return f"http://{addr}:{EnvVars.get_comfy_port()}/{endpoint}"
 
     async def distribute_prompt(self, prompt_json):
+
+        logger.info("Received request to distribute prompt")
+
         while self._current_state != ClusterState.IDLE:
             logger.info("Instance is in state: %s, waiting for idle...", self._current_state)
             await asyncio.sleep(0.5)
@@ -68,7 +71,6 @@ class ThisInstance:
         message.header.type = ClusterMessageType.DISTRIBUTE_PROMPT
         message.header.require_ack = True
         message.prompt = json.dumps(prompt_json)
-        logger.info("Distributing prompt: %s", message.prompt)
         await self.cluster.udp_message_handler.send_and_wait_thread_safe(message)
 
     async def fanin_tensor(self, tensor):

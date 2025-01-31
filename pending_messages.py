@@ -11,24 +11,24 @@ class PendingMessage:
     def __init__(self, message_id: int, message):
         self.message_id: int = message_id
         self.message = message
-        self.pending_acks: Dict[str, PendingInstanceMessage] = {} # Dict of addr -> {timestamp: float, retry_count: int}
+        self.pending_acks: Dict[int, PendingInstanceMessage] = {} # Dict of addr -> {timestamp: float, retry_count: int}
         self.future = None
         self.MAX_RETRIES: int = 10
 
-    def increment_retry(self, addr: str):
-        if addr not in self.pending_acks:
-            self.pending_acks[addr] = PendingInstanceMessage(time.time(), 0, addr)
-        self.pending_acks[addr].retry_count += 1
-        self.pending_acks[addr].timestamp = time.time()
-        return self.pending_acks[addr].retry_count
+    def increment_retry(self, instance_id: int):
+        if instance_id not in self.pending_acks:
+            self.pending_acks[instance_id] = PendingInstanceMessage(time.time(), 0, instance_id)
+        self.pending_acks[instance_id].retry_count += 1
+        self.pending_acks[instance_id].timestamp = time.time()
+        return self.pending_acks[instance_id].retry_count
 
-    def has_exceeded_retries(self, addr: str):
-        if addr not in self.pending_acks:
+    def has_exceeded_retries(self, instance_id: int):
+        if instance_id not in self.pending_acks:
             return False
-        return self.pending_acks[addr].retry_count >= self.MAX_RETRIES
+        return self.pending_acks[instance_id].retry_count >= self.MAX_RETRIES
         
-    def should_retry(self, addr: str, current_time: float):
-        if addr not in self.pending_acks:
+    def should_retry(self, instance_id: int, current_time: float):
+        if instance_id not in self.pending_acks:
             return False
-        last_try = self.pending_acks[addr].timestamp
-        return current_time - last_try > 3.0 
+        last_try = self.pending_acks[instance_id].timestamp
+        return current_time - last_try > 5.0 

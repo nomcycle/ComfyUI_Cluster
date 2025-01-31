@@ -27,9 +27,13 @@ class UDPSingleton:
     @classmethod
     def start_threads(cls):
         if not cls._running:
+
             cls._running = True
             cls._incoming_thread = threading.Thread(target=cls._incoming_thread_fn, daemon=True)
+            cls._incoming_thread.name = 'ComfyCluster-IncomingPackets'
+
             cls._outgoing_thread = threading.Thread(target=cls._outgoing_thread_fn, daemon=True)
+            cls._outgoing_thread.name = 'ComfyCluster-OutgoingPackets'
 
             cls._incoming_thread.start()
             cls._outgoing_thread.start()

@@ -35,7 +35,9 @@ class InstanceLoop:
         self._state_lock = threading.Lock()
 
         self._state_thread = threading.Thread(target=self._run_state_loop, daemon=True)
+        self._state_thread.name = "ComfyCluster-StateHandler"
         self._packet_thread = threading.Thread(target=self._run_packet_loop, daemon=True)
+        self._packet_thread.name = 'ComfyCluster-MessageHandler'
 
         self._incoming_processed_message_queue = queue.Queue()
         self._incoming_processed_buffer_queue = queue.Queue()
