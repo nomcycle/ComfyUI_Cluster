@@ -5,6 +5,7 @@ from .protobuf.messages_pb2 import ClusterRole
 class EnvVars:
     _instance_count = None
     _instance_role = None
+    _instance_index = None
     _udp_broadcast = None
     _udp_hostnames = None
     _single_host = None
@@ -23,6 +24,17 @@ class EnvVars:
             cls._instance_count = int(instance_count)
         except ValueError:
             raise Exception("COMFY_CLUSTER_INSTANCE_COUNT must be an integer value")
+
+        # Parse instance index
+        instance_index = os.getenv('COMFY_CLUSTER_INSTANCE_INDEX')
+        if instance_index is None:
+            raise Exception("COMFY_CLUSTER_INSTANCE_INDEX environment variable must be set")
+        try:
+            cls._instance_index = int(instance_index)
+        except ValueError:
+            raise Exception("COMFY_CLUSTER_INSTANCE_INDEX must be an integer value")
+        if cls._instance_index < 0 or cls._instance_index >= cls._instance_count:
+            raise Exception(f"COMFY_CLUSTER_INSTANCE_INDEX must be between 0 and {cls._instance_count - 1}")
 
         # Parse instance role
         instance_role = os.getenv('COMFY_CLUSTER_ROLE')
@@ -72,6 +84,12 @@ class EnvVars:
         if cls._instance_count is None:
             cls.load()
         return cls._instance_count
+
+    @classmethod
+    def get_instance_index(cls):
+        if cls._instance_index is None:
+            cls.load()
+        return cls._instance_index
 
     @classmethod
     def get_instance_role(cls):

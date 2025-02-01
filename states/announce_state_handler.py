@@ -11,8 +11,11 @@ from ..protobuf.messages_pb2 import (
 from .state_handler import StateHandler
 from .idle_state import IdleStateHandler
 from .state_result import StateResult
+from ..env_vars import EnvVars
 
-from ..instance import ThisInstance, OtherLeaderInstance, OtherFollowerInstance
+from ..instance import ThisInstance, OtherInstance, OtherLeaderInstance, OtherFollowerInstance
+from ..queued import IncomingMessage
+from ..udp_base import UDPSingleton
 
 class AnnounceInstanceStateHandler(StateHandler):
     def __init__(self, instance: 'ThisInstance'):
@@ -24,38 +27,40 @@ class AnnounceInstanceStateHandler(StateHandler):
         announce.role = self._instance.role
         announce.all_accounted_for = self._instance.cluster.all_accounted_for()
         
-        logger.info("Announcing instance '%s' (role=%s)", self._instance.instance_id, self._instance.role)
-        self._instance.cluster.udp.send_no_wait(announce)
+        logger.info("Announcing instance '%s' (role=%s)", EnvVars.get_instance_index(), self._instance.role)
+        self._instance.cluster.udp_message_handler.send_no_wait(announce)
 
     async def handle_state(self, current_state: int) -> StateResult:
         self.send_announce()
         await asyncio.sleep(3)
 
-    def handle_message(self, current_state: int, msg_type: int, message, addr: str) -> StateResult | None:
-        announce_instance = ParseDict(message, ClusterAnnounceInstance())
-        other_instance: Instance = None
+    async def handle_message(self, current_state: int, incoming_message: IncomingMessage) -> StateResult | None:
+        announce_instance = ParseDict(incoming_message.message, ClusterAnnounceInstance())
+        other_instance: OtherInstance = None
 
-        if announce_instance.header.sender_instance_id in self._instance.cluster.instances:
-            other_instance = self._instance.cluster.instances[announce_instance.header.sender_instance_id]
+        if incoming_message.sender_instance_id in self._instance.cluster.instances:
+            other_instance = self._instance.cluster.instances[incoming_message.sender_instance_id]
             other_instance.all_accounted_for = announce_instance.all_accounted_for
         else:
-            logger.info("New cluster instance '%s' discovered at %s", announce_instance.header.sender_instance_id, addr)
+            logger.info("New cluster instance '%s' discovered at %s", incoming_message.sender_instance_id, incoming_message.sender_addr)
 
             role = announce_instance.role
             other_instance = None
 
             if role == ClusterRole.LEADER:
-                other_instance = OtherLeaderInstance(announce_instance.header.sender_instance_id, addr, role)
+                other_instance = OtherLeaderInstance(incoming_message.sender_addr, role, incoming_message.sender_instance_id)
             else: 
-                other_instance = OtherFollowerInstance(announce_instance.header.sender_instance_id, addr, role)
+                other_instance = OtherFollowerInstance(incoming_message.sender_addr, role, incoming_message.sender_instance_id)
 
             other_instance.all_accounted_for = announce_instance.all_accounted_for
-            self._instance.cluster.instances[announce_instance.header.sender_instance_id] = other_instance
-            self._instance.cluster.expected_instances.append(addr)
+            self._instance.cluster.instances[incoming_message.sender_instance_id] = other_instance
 
             if self._instance.cluster.all_accounted_for():
                 logger.info("All cluster instances connected (%d total)", self._instance.cluster.instance_count)
-                self._instance.cluster.udp.set_cluster_instance_addresses(self._instance.cluster.expected_instances)
+                addresses = []
+                addresses.append((EnvVars.get_instance_index(), EnvVars.get_listen_address()))
+                addresses.extend(sorted([(instance_id, instance.address) for instance_id, instance in self._instance.cluster.instances.items()]))
+                UDPSingleton.set_cluster_instance_addresses(addresses)
 
         other_instance.all_accounted_for = announce_instance.all_accounted_for
         all_instances_all_accounted_for = all(instance.all_accounted_for for instance in self._instance.cluster.instances.values())

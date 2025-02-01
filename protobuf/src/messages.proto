@@ -1,34 +1,38 @@
 syntax = "proto3";
 
 enum ClusterRole {
-    UNSET = 0;
+    NO_ROLE = 0;
     LEADER = 1;
     FOLLOWER = 2;
 }
 
 enum ClusterState {
-    INITIALIZE = 0;
-    POPULATING = 1;
-    IDLE = 2;
-    EXECUTING = 4;
-    ERROR = 8;
+    NO_STATE = 0;
+    INITIALIZE = 1; 
+    POPULATING = 2;
+    IDLE = 4;
+    EXECUTING = 8;
+    ERROR = 16;
 }
 
 enum ClusterMessageType {
-    UNKNOWN = 0;
+    NO_MESSAGE_TYPE = 0;
     ACK = 1;
     SIGNAL_HOT_RELOAD = 2;
     ANNOUNCE = 4;
     SIGNAL_IDLE = 8;
     DISTRIBUTE_PROMPT = 16;
-    FENCE_REQUEST = 32;
-    FENCE_RESPONSE = 64;
+    DISTRIBUTE_BUFFER_BEGIN = 32;
+    DISTRIBUTE_BUFFER_ALL_SENT = 64;
+    DISTRIBUTE_BUFFER_NEXT = 128;
+    DISTRIBUTE_BUFFER_RESEND = 256;
+    DISTRIBUTE_BUFFER_ACK = 512;
 }
 
 message ClusterMessageHeader {
     ClusterMessageType type = 1;
     int32 message_id = 2;
-    string sender_instance_id = 3;
+    int32 sender_instance_id = 3;
     int32 process_id = 4;
     bool require_ack = 5;
 }
@@ -62,6 +66,39 @@ message ClusterAnnounceInstance {
 message ClusterDistributePrompt {
     ClusterMessageHeader header = 1;
     string prompt = 2; 
+}
+
+enum ClusterBufferType {
+    NO_BUFFER_TYPE = 0;
+    TENSOR = 1;
+}
+
+message ClusterDistributeBufferBegin {
+    ClusterMessageHeader header = 1;
+    int32 instance_index = 2;
+    ClusterBufferType buffer_type = 3;
+    int32 buffer_byte_size = 4;
+    int32 chunk_count = 5;
+}
+
+message ClusterDistributeBufferAck {
+    ClusterMessageHeader header = 1;
+    int32 instance_index = 2;
+}
+
+message ClusterDistributeBufferNext {
+    ClusterMessageHeader header = 1;
+}
+
+message ClusterDistributeBufferAllSent {
+    ClusterMessageHeader header = 1;
+    int32 instance_index = 3;
+}
+
+message ClusterDistributeBufferResend {
+    ClusterMessageHeader header = 1;
+    int32 instance_index = 2;
+    bytes missing_chunk_ids = 3;
 }
 
 message ClusterSignalIdle {

@@ -16,6 +16,8 @@ from .state_result import StateResult
 from ..instance import ThisInstance
 from execution import validate_prompt
 from ..env_vars import EnvVars
+from .executing_state import ExecutingStateHandler
+from ..queued import IncomingMessage
 
 class IdleStateHandler(StateHandler):
     def __init__(self, instance: ThisInstance):
@@ -28,11 +30,12 @@ class IdleStateHandler(StateHandler):
         
         # logger.info("Sending idle signal to followers")
         # await self._instance.cluster.udp.send_and_wait(signal_idle)
-        await asyncio.sleep(0.1)
+        logger.info("Idling...")
+        await asyncio.sleep(1.0)
 
-    def handle_message(self, current_state: int, msg_type: int, message, addr: str) -> StateResult | None:
-        if msg_type == ClusterMessageType.DISTRIBUTE_PROMPT:
-            distribute_prompt = ParseDict(message, ClusterDistributePrompt())
+    async def handle_message(self, current_state: int, incoming_message: IncomingMessage) -> StateResult | None:
+        if incoming_message.msg_type == ClusterMessageType.DISTRIBUTE_PROMPT:
+            distribute_prompt = ParseDict(incoming_message.message, ClusterDistributePrompt())
             # prompt_json = json.loads(distribute_prompt.prompt)
 
             prompt_json = json.loads(distribute_prompt.prompt)
@@ -47,14 +50,16 @@ class IdleStateHandler(StateHandler):
                 response = requests.post(url, json=json_data)
                 response.raise_for_status()
                 logger.info("Successfully posted prompt to local ComfyUI instance")
+                return StateResult(current_state, self, ClusterState.EXECUTING, ExecutingStateHandler(self._instance))
+
             except requests.exceptions.RequestException as e:
                 logger.error(f"Error posting prompt: {str(e)}")
         else:
-            signal_idle = ParseDict(message, ClusterSignalIdle())
+            signal_idle = ParseDict(incoming_message.message, ClusterSignalIdle())
             sender_id = signal_idle.header.sender_instance_id
             
             if sender_id not in self._instance.cluster.instances:
-                logger.error(f"Invalid idle signal from unknown instance {sender_id}")
+                logger.error("Invalid idle signal from unknown instance %s", sender_id)
                 return
                 
-            logger.info(f"Received idle signal from leader {sender_id}")
+            logger.info("Received idle signal from leader %s", sender_id)
