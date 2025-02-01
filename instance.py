@@ -1,8 +1,8 @@
 from typing import Dict, TYPE_CHECKING
+import json
 from google.protobuf.json_format import ParseDict
 
 import queue
-import json
 import asyncio
 import random
 import sys
@@ -47,6 +47,7 @@ class ThisInstance:
         self._current_state_handler = self._signal_hot_reload_state_handler
 
     async def tick_state(self):
+
         if not self._current_state_handler.check_current_state(self._current_state):
             return
 

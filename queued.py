@@ -19,11 +19,7 @@ from .protobuf.messages_pb2 import (
 
 class IncomingPacket:
     def _is_buffer_packet (self, data):
-        if len(data) >= 4:
-            magic_number = int.from_bytes(data[:4], byteorder='big')
-            if magic_number == 123456789:
-                return True
-        return False
+        return len(data) >= 4 and int.from_bytes(data[:4], byteorder='big') == 123456789
 
     def __init__(self, packet, sender_addr):
         self.packet = packet
@@ -40,7 +36,6 @@ class IncomingMessage:
                 msg_type_str: str,
                 message_id: int,
                 msg_type: int,
-                process_id: int,
                 require_ack: bool,
                 message):
         self.sender_addr = sender_addr
@@ -48,7 +43,6 @@ class IncomingMessage:
         self.msg_type_str = msg_type_str
         self.message_id = message_id
         self.msg_type = msg_type
-        self.process_id = process_id
         self.require_ack = require_ack
         self.message = message
 
@@ -58,7 +52,6 @@ class IncomingMessage:
                  f"\t\tsender_instance_id={self.sender_instance_id},\n"
                  f"\t\tmsg_type={self.msg_type_str},\n"
                  f"\t\tmessage_id={self.message_id},\n"
-                 f"\t\tprocess_id={self.process_id},\n"
                  f"\t\trequire_ack={self.require_ack}")
 
         if self.msg_type == ClusterMessageType.ACK:

@@ -39,8 +39,8 @@ class InstanceLoop:
         self._packet_thread = threading.Thread(target=self._run_packet_loop, daemon=True)
         self._packet_thread.name = 'ComfyCluster-MessageHandler'
 
-        self._incoming_processed_message_queue = queue.Queue()
-        self._incoming_processed_buffer_queue = queue.Queue()
+        self._incoming_processed_message_queue = queue.Queue(maxsize=1000)
+        self._incoming_processed_buffer_queue = queue.Queue(maxsize=1000000000)
 
         self._state_thread.start()
         self._packet_thread.start()
@@ -90,7 +90,7 @@ class InstanceLoop:
         try:
             while self._running:
                 await self._this_instance.tick_state()
-                await asyncio.sleep(0.001)
+                await asyncio.sleep(0.000001)
         except Exception as e:
             logger.error("State loop failed: %s", str(e), exc_info=True)
             raise
@@ -108,18 +108,23 @@ class InstanceLoop:
     async def _packet_loop_async(self):
         try:
             while self._running:
-                while not self._incoming_processed_buffer_queue.empty():
-                    incoming_buffer = self._incoming_processed_buffer_queue.get()
-                    await self._this_instance.handle_buffer(incoming_buffer)
-                    self._incoming_processed_buffer_queue.task_done()
+                while True:
+                    try:
+                        incoming_buffer = self._incoming_processed_buffer_queue.get_nowait()
+                        await self._this_instance.handle_buffer(incoming_buffer)
+                        self._incoming_processed_buffer_queue.task_done()
+                    except queue.Empty:
+                        break
 
-                while not self._incoming_processed_message_queue.empty():
-                    incoming_message = self._incoming_processed_message_queue.get()
-                    await self._this_instance.handle_message(incoming_message)
-                    self._incoming_processed_message_queue.task_done()
-                    
-                await asyncio.sleep(0.001)  # Small sleep to prevent busy waiting
+                while True:
+                    try:
+                        incoming_message = self._incoming_processed_message_queue.get_nowait()
+                        await self._this_instance.handle_message(incoming_message)
+                        self._incoming_processed_message_queue.task_done()
+                    except queue.Empty:
+                        break
                 
+            await asyncio.sleep(0.000001)
         except Exception as e:
             logger.error("Packet loop failed: %s", str(e), exc_info=True)
             raise

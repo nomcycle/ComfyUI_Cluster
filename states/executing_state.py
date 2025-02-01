@@ -108,10 +108,11 @@ class ExecutingStateHandler(StateHandler):
 
         self._instance_data = InstanceData(EnvVars.get_instance_count())
         self._this_instance_state: ThisInstanceState = ThisInstanceState.EMITTING if self._current_distribution_instance_index == EnvVars.get_instance_index() else ThisInstanceState.AWAITING_SEND_BEGIN_BUFFER
+        self._time_since_last_chunk: float = time.time()
+        self._time_since_polling_chunk_progress = time.time()
 
         self._chunk_lock = threading.Lock()
         self._received_acks = set()  # Track which instances have ACKed
-        self._last_chunk_check = 0
         self._recieved_buffer_begin: Dict[int, bool] = {}  # instance_index -> received begin flag
         
         super().__init__(instance,
@@ -156,7 +157,7 @@ class ExecutingStateHandler(StateHandler):
     async def handle_sending_state(self):
         # Only send chunks if we have any to send and all instances have sent resend requests
         if not self._has_received_all_instance_resend_requests():
-            return
+            return None
 
         for instance_id in range(EnvVars.get_instance_count()):
             self._instance_data.set_state(instance_id, OtherInstanceState.AWAITING_CHUNKS)
@@ -168,7 +169,7 @@ class ExecutingStateHandler(StateHandler):
                 acked_instances.append(i)
                 
         if not acked_instances:
-            return
+            return None
 
         # Create a combined bitfield of all acked chunks
         chunk_count = len(self._this_instance_dependency_chunks)
@@ -200,37 +201,40 @@ class ExecutingStateHandler(StateHandler):
 
     async def handle_receiving_state(self):
         current_time = time.time()
-        if current_time - self._last_chunk_check >= 0.1:  # 10ms
-            self._last_chunk_check = current_time
-            
-            total_chunks, expected_total = self._buffer_progress(self._current_distribution_instance_index)
-            logger.debug(f"Instance {EnvVars.get_instance_index()}: Have {total_chunks}/{expected_total} chunks")
-            if expected_total > 0:
-                if total_chunks < expected_total:
-                    # Create expected bitfield of 1s up to expected_total
-                    expected_bitfield = np.ones(expected_total, dtype=np.bool_)
-                    
-                    missing_bitfield = ~self._instance_data.get_chunks_bitfield(self._current_distribution_instance_index) & expected_bitfield
-                    missing_bytes = np.packbits(missing_bitfield).tobytes()
-                    message = ClusterDistributeBufferResend()
-                    message.header.type = ClusterMessageType.DISTRIBUTE_BUFFER_RESEND
-                    message.header.require_ack = True
-                    message.instance_index = EnvVars.get_instance_index()
-                    message.missing_chunk_ids = missing_bytes
-                    await self._instance.cluster.udp_message_handler.send_and_wait(message, self._current_distribution_instance_index)
+        if current_time - self._time_since_last_chunk < 1 or current_time - self._time_since_polling_chunk_progress < 1:
+            await asyncio.sleep(0.0001)
 
-                elif not self._instance_data.get_received_all_chunks(self._current_distribution_instance_index):
-                    message = ClusterDistributeBufferAck()
-                    message.header.type = ClusterMessageType.DISTRIBUTE_BUFFER_ACK
-                    message.header.require_ack = True
-                    message.instance_index = EnvVars.get_instance_index()
-                    await self._instance.cluster.udp_message_handler.send_and_wait_thread_safe(message, self._current_distribution_instance_index)
+        self._time_since_polling_chunk_progress = current_time
+        
+        total_chunks, expected_total = self._buffer_progress(self._current_distribution_instance_index)
+        logger.debug(f"Instance {EnvVars.get_instance_index()}: Have {total_chunks}/{expected_total} chunks")
+        if expected_total > 0:
+            if total_chunks < expected_total:
+                # Create expected bitfield of 1s up to expected_total
+                expected_bitfield = np.ones(expected_total, dtype=np.bool_)
+                
+                missing_bitfield = ~self._instance_data.get_chunks_bitfield(self._current_distribution_instance_index) & expected_bitfield
+                missing_bytes = np.packbits(missing_bitfield).tobytes()
+                message = ClusterDistributeBufferResend()
+                message.header.type = ClusterMessageType.DISTRIBUTE_BUFFER_RESEND
+                message.header.require_ack = True
+                message.instance_index = EnvVars.get_instance_index()
+                message.missing_chunk_ids = missing_bytes
+                await self._instance.cluster.udp_message_handler.send_and_wait(message, self._current_distribution_instance_index)
 
-                    logger.info(f"All chunks received from instance {self._current_distribution_instance_index}, joining buffers")
-                    chunks = self._instance_data.get_dependency_chunks(self._current_distribution_instance_index)
-                    joined_buffer = b''.join(chunks.values())
-                    self._instance_data.set_dependency_buffer(self._current_distribution_instance_index, joined_buffer)
-                    self._instance_data.set_received_all_chunks(self._current_distribution_instance_index, True)
+            elif not self._instance_data.get_received_all_chunks(self._current_distribution_instance_index):
+                message = ClusterDistributeBufferAck()
+                message.header.type = ClusterMessageType.DISTRIBUTE_BUFFER_ACK
+                message.header.require_ack = True
+                message.instance_index = EnvVars.get_instance_index()
+                await self._instance.cluster.udp_message_handler.send_and_wait(message, self._current_distribution_instance_index)
+
+                logger.info(f"All chunks received from instance {self._current_distribution_instance_index}, joining buffers")
+                chunks = self._instance_data.get_dependency_chunks(self._current_distribution_instance_index)
+                joined_buffer = b''.join(chunks.values())
+                self._instance_data.set_dependency_buffer(self._current_distribution_instance_index, joined_buffer)
+                self._instance_data.set_received_all_chunks(self._current_distribution_instance_index, True)
+        return None
 
     async def handle_state(self, current_state: int) -> StateResult | None:
         with self._thread_lock:
@@ -287,8 +291,15 @@ class ExecutingStateHandler(StateHandler):
                 if addr == self._instance.cluster.instances[i].address:
                     sender_instance = i
                     break
+
+            # Check whether we already have that chunk.
+            chunk_bitfield = self._instance_data.get_chunks_bitfield(sender_instance)
+            if chunk_bitfield[chunk_id]:
+                return None
                     
             if sender_instance is not None:
+                self._time_since_last_chunk = time.time()
+
                 chunks = self._instance_data.get_dependency_chunks(sender_instance)
                 chunks[chunk_id] = buffer_view[HEADER_SIZE:].tobytes()
                 self._instance_data.set_dependency_chunks(sender_instance, chunks)
@@ -302,18 +313,11 @@ class ExecutingStateHandler(StateHandler):
                 if chunk_id % 100 == 0 or (chunk_id == len(self._instance_data.get_expected_chunk_ids(sender_instance)) - 1):
                     total_chunks, expected_total = self._buffer_progress(sender_instance)
                     logger.debug(f"Received chunk {chunk_id} from instance {sender_instance}. Total: {total_chunks}/{expected_total}")
+        return None
 
     def _emit_byte_chunk(self, buffer_flag: bytes, chunk_id_bytes: bytes, chunk_data: bytes, instance_id: int | None = None):
         chunk_with_id = buffer_flag + chunk_id_bytes + chunk_data
         self._instance.cluster.udp_buffer_handler.queue_byte_buffer(chunk_with_id, instance_id)
-
-    async def _emit_all_sent_message(self):
-        instance_index = EnvVars.get_instance_index()
-        all_sent_msg = ClusterDistributeBufferAllSent()
-        all_sent_msg.header.type = ClusterMessageType.DISTRIBUTE_BUFFER_ALL_SENT
-        all_sent_msg.header.require_ack = True
-        all_sent_msg.instance_index = instance_index
-        await self._instance.cluster.udp_message_handler.send_and_wait_thread_safe(all_sent_msg)
 
     def _create_chunks(self, byte_buffer):
         chunk_size = UDP_MTU - HEADER_SIZE
@@ -335,20 +339,14 @@ class ExecutingStateHandler(StateHandler):
         self._instance_data.set_chunks_bitfield(EnvVars.get_instance_index(), np.ones(len(self._this_instance_dependency_chunks), dtype=bool))
 
     async def _distribute_buffer(self, buffer_type: int, byte_buffer: bytes) -> list[bytes]:
-        instance_index = EnvVars.get_instance_index()
 
-        # Wait until it's our turn to distribute
-        while self._this_instance_state != ThisInstanceState.EMITTING:
-            logger.debug("Awaiting our turn to distribute. Instance index currently distributing: %d, our instance index: %d", self._current_distribution_instance_index, instance_index)
-            await asyncio.sleep(0.5)
-            
         self._this_instance_dependency_byte_buffer = byte_buffer
         self._this_instance_dependency_buffer_type = buffer_type
+        self._create_chunks(self._this_instance_dependency_byte_buffer)
+
         instance_index = EnvVars.get_instance_index()
         byte_buffer_size = len(self._this_instance_dependency_byte_buffer)
         chunk_count = math.ceil(byte_buffer_size / (UDP_MTU - HEADER_SIZE))
-
-        self._create_chunks(self._this_instance_dependency_byte_buffer)
 
         # Prepare distribution message
         message = ClusterDistributeBufferBegin(
@@ -362,6 +360,11 @@ class ExecutingStateHandler(StateHandler):
             chunk_count=chunk_count
         )
 
+        # Wait until it's our turn to distribute.
+        while self._this_instance_state != ThisInstanceState.EMITTING:
+            logger.debug("Awaiting our turn to distribute. Instance index currently distributing: %d, our instance index: %d", self._current_distribution_instance_index, instance_index)
+            await asyncio.sleep(0.5)
+            
         logger.debug("Sending buffer begin message")
         await self._instance.cluster.udp_message_handler.send_and_wait_thread_safe(message)
 

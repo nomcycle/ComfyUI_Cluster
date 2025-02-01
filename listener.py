@@ -9,14 +9,15 @@ class UDPListener:
 
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         
-        receive_buffer_size = 16 * 1024 * 1024  # 16MB
-        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, receive_buffer_size)
+        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 16777216)
         
         actual_buffer_size = self.sock.getsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF)
         logger.debug(f"UDP receive buffer size: {actual_buffer_size / 1024 / 1024:.2f} MB")
         
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        if hasattr(socket, 'SO_PRIORITY'):
+            self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_PRIORITY, 6)
         
         self.sock.bind((self._host, self._port))
         logger.debug("UDP listener bound to %s:%d", host, port)

@@ -31,8 +31,25 @@ class AnnounceInstanceStateHandler(StateHandler):
         self._instance.cluster.udp_message_handler.send_no_wait(announce)
 
     async def handle_state(self, current_state: int) -> StateResult:
+        if not EnvVars.get_udp_broadcast():
+            for instance_id, instance_addr in UDPSingleton.get_cluster_instance_addresses():
+                self.register_instance(ClusterRole.LEADER if instance_id == 0 else ClusterRole.FOLLOWER, instance_id, instance_addr, True)
+ 
+            return StateResult(current_state, self, ClusterState.IDLE, IdleStateHandler(self._instance))
         self.send_announce()
         await asyncio.sleep(3)
+
+    def register_instance(self, role, instance_id, instance_addr, all_accounted_for: bool):
+        other_instance = None
+
+        if role == ClusterRole.LEADER:
+            other_instance = OtherLeaderInstance(instance_addr, role, instance_id)
+        else: 
+            other_instance = OtherFollowerInstance(instance_addr, role, instance_id)
+
+        other_instance.all_accounted_for = all_accounted_for
+        self._instance.cluster.instances[instance_id] = other_instance
+        return other_instance
 
     async def handle_message(self, current_state: int, incoming_message: IncomingMessage) -> StateResult | None:
         announce_instance = ParseDict(incoming_message.message, ClusterAnnounceInstance())
@@ -44,16 +61,7 @@ class AnnounceInstanceStateHandler(StateHandler):
         else:
             logger.info("New cluster instance '%s' discovered at %s", incoming_message.sender_instance_id, incoming_message.sender_addr)
 
-            role = announce_instance.role
-            other_instance = None
-
-            if role == ClusterRole.LEADER:
-                other_instance = OtherLeaderInstance(incoming_message.sender_addr, role, incoming_message.sender_instance_id)
-            else: 
-                other_instance = OtherFollowerInstance(incoming_message.sender_addr, role, incoming_message.sender_instance_id)
-
-            other_instance.all_accounted_for = announce_instance.all_accounted_for
-            self._instance.cluster.instances[incoming_message.sender_instance_id] = other_instance
+            self.register_instance(announce_instance.role, incoming_message.sender_instance_id, incoming_message.sender_addr, announce_instance.all_accounted_for)
 
             if self._instance.cluster.all_accounted_for():
                 logger.info("All cluster instances connected (%d total)", self._instance.cluster.instance_count)

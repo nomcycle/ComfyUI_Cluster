@@ -43,14 +43,14 @@ class EnvVars:
         cls._instance_role = ClusterRole.LEADER if instance_role == 'LEADER' else ClusterRole.FOLLOWER
 
         # Parse UDP broadcast flag
-        cls._udp_broadcast = os.getenv('COMFY_CLUSTER_UDP_BROADCAST') is not None
+        cls._udp_broadcast = os.getenv('COMFY_CLUSTER_UDP_BROADCAST', 'false').lower() == 'true'
 
         # Parse UDP hostnames
         cls._udp_hostnames = []
         if not cls._udp_broadcast:
             hostnames = os.getenv('COMFY_CLUSTER_UDP_HOSTNAMES')
             if hostnames is not None:
-                cls._udp_hostnames = [h.strip() for h in hostnames.split(',')]
+                cls._udp_hostnames = [(i, h.strip()) for i, h in enumerate(hostnames.split(','))]
 
         # Parse single host flag
         cls._single_host = os.getenv('COMFY_CLUSTER_SINGLE_HOST', 'false').lower() == 'true'
