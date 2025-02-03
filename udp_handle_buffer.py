@@ -24,8 +24,8 @@ class UDPBufferHandler(UDPBase):
         UDPSingleton.add_handle_incoming_packet_callback(self._handle_incoming_packet)
         UDPSingleton.add_outgoing_thread_callback(self._outgoing_thread_callback)
 
-    def get_time_since_last_packet(self):
-        return time.time() - self._last_packet_time
+    def get_incoming_buffer_queue_size(self):
+        return self._incoming_processed_packet_queue.qsize
 
     def _handle_incoming_packet(self, incoming_packet: IncomingPacket):
         try:
@@ -53,17 +53,17 @@ class UDPBufferHandler(UDPBase):
             addr = UDPSingleton.get_cluster_instance_address(instance_id)
         self._outgoing_queue.put_nowait(OutgoingPacket(byte_buffer, addr))
 
-        # queue_size = self._outgoing_queue.qsize()
-        # if queue_size % 100 == 0:
-        #     logger.debug('Outgoing buffer queue size: %s', queue_size)
+        queue_size = self._outgoing_queue.qsize()
+        if queue_size % 1000 == 0:
+            logger.debug('Outgoing buffer queue size: %s', queue_size)
 
     def _process_buffer(self, incoming_packet: IncomingPacket):
         try:
             self._incoming_processed_packet_queue.put_nowait(incoming_packet)
             
-            # queue_size = self._incoming_processed_packet_queue.qsize()
-            # if queue_size % 100 == 0:
-            #     logger.debug('Incoming buffer queue size: %s', queue_size)
+            queue_size = self._incoming_processed_packet_queue.qsize()
+            if queue_size % 1000 == 0:
+                logger.debug('Incoming buffer queue size: %s', queue_size)
 
         except queue.Full:
             logger.warning(f"Message queue full, dropping buffer.")

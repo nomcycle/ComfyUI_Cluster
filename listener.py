@@ -18,14 +18,19 @@ class UDPListener:
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         if hasattr(socket, 'SO_PRIORITY'):
             self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_PRIORITY, 6)
-        
+        self.sock.setblocking(False)
+
         self.sock.bind((self._host, self._port))
         logger.debug("UDP listener bound to %s:%d", host, port)
 
     def poll(self):
-        packet, addr = self.sock.recvfrom(65535)  # Max UDP packet size
-        sender_addr = addr[0]
-        return packet, sender_addr
+        try:
+            packet, addr = self.sock.recvfrom(65535)  # Max UDP packet size
+            sender_addr = addr[0]
+            return packet, sender_addr
+        except BlockingIOError:
+            # No data available yet
+            return None, None
                 
     def __del__(self):
         self.sock.close()

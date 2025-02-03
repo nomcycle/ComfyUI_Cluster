@@ -88,6 +88,10 @@ class UDPSingleton:
         
         while cls._running:
             packet, sender_addr = cls._listener.poll()
+            if packet is None or sender_addr is None:
+                time.sleep(0.00001)
+                continue
+
             incoming_packet = IncomingPacket(packet, sender_addr)
             for callback in cls._incoming_thread_callbacks:
                 try:

@@ -54,6 +54,7 @@ class EnvVars:
 
         # Parse single host flag
         cls._single_host = os.getenv('COMFY_CLUSTER_SINGLE_HOST', 'false').lower() == 'true'
+        cls._hot_reload = os.getenv('COMFY_CLUSTER_HOT_RELOAD', 'false').lower() == 'true'
 
         # Parse listen address
         cls._listen_address = os.getenv('COMFY_CLUSTER_LISTEN_ADDRESS', '0.0.0.0')
@@ -114,6 +115,12 @@ class EnvVars:
         if cls._single_host is None:
             cls.load()
         return cls._single_host
+
+    @classmethod
+    def get_hot_reload(cls) -> bool:
+        if cls._hot_reload is None:
+            cls.load()
+        return cls._hot_reload
 
     @classmethod
     def get_listen_address(cls) -> str:

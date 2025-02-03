@@ -41,10 +41,15 @@ class ThisInstance:
         self.address: str = address
         self.role: int = role
         self._msg_queue = queue.Queue()
-        from .states.signal_hot_reload_state import SignalHotReloadStateHandler
-        self._signal_hot_reload_state_handler = SignalHotReloadStateHandler(self, on_hot_reload)
-        self._current_state = ClusterState.INITIALIZE
-        self._current_state_handler = self._signal_hot_reload_state_handler
+
+        if EnvVars.get_hot_reload():
+            from .states.signal_hot_reload_state import SignalHotReloadStateHandler
+            self._signal_hot_reload_state_handler = SignalHotReloadStateHandler(self, on_hot_reload)
+            self._current_state = ClusterState.INITIALIZE
+        else:
+            from .states.announce_state_handler import AnnounceInstanceStateHandler
+            self._current_state_handler = AnnounceInstanceStateHandler(self)
+            self._current_state = ClusterState.POPULATING
 
     async def tick_state(self):
 

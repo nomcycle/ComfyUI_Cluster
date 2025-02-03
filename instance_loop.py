@@ -124,7 +124,7 @@ class InstanceLoop:
                     except queue.Empty:
                         break
                 
-            await asyncio.sleep(0.000001)
+                await asyncio.sleep(0.000001)
         except Exception as e:
             logger.error("Packet loop failed: %s", str(e), exc_info=True)
             raise

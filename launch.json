@@ -35,13 +35,15 @@
                 "8189"
             ],
             "env": {
-                "COMFY_CLUSTER_UDP_BROADCAST": "true",
+                "COMFY_CLUSTER_UDP_BROADCAST": "false",
                 "COMFY_CLUSTER_INSTANCE_COUNT": "2",
+                "COMFY_CLUSTER_INSTANCE_INDEX": "0",
                 "COMFY_CLUSTER_ROLE": "LEADER",
                 "COMFY_CLUSTER_SINGLE_HOST": "true",
                 "COMFY_CLUSTER_LISTEN_PORT": "9997",
                 "COMFY_CLUSTER_SEND_PORT": "9998",
-                "COMFY_CLUSTER_COMFY_PORT": "8189"
+                "COMFY_CLUSTER_COMFY_PORT": "8189",
+                "COMFY_CLUSTER_UDP_HOSTNAMES": "127.0.0.1, 127.0.0.1"
             }
         }
         {
@@ -57,13 +59,15 @@
                 "8190"
             ],
             "env": {
-                "COMFY_CLUSTER_UDP_BROADCAST": "true",
+                "COMFY_CLUSTER_UDP_BROADCAST": "false",
                 "COMFY_CLUSTER_INSTANCE_COUNT": "2",
+                "COMFY_CLUSTER_INSTANCE_INDEX": "1",
                 "COMFY_CLUSTER_ROLE": "FOLLOWER",
                 "COMFY_CLUSTER_SINGLE_HOST": "true",
                 "COMFY_CLUSTER_LISTEN_PORT": "9998",
                 "COMFY_CLUSTER_SEND_PORT": "9997",
-                "COMFY_CLUSTER_COMFY_PORT": "8190"
+                "COMFY_CLUSTER_COMFY_PORT": "8190",
+                "COMFY_CLUSTER_UDP_HOSTNAMES": "127.0.0.1, 127.0.0.1"
             }
         }
     ],
