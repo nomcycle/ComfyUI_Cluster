@@ -8,7 +8,7 @@ from .log import logger
 from .udp_base import UDPBase
 from .udp_base import UDPSingleton
 from .env_vars import EnvVars
-from .queued import IncomingPacket, OutgoingPacket
+from .queued import IncomingPacket, IncomingBuffer, OutgoingPacket
     
 class ACKResult:
     def __init__(self, success: bool, error_msg: str = None):
@@ -30,12 +30,12 @@ class UDPBufferHandler(UDPBase):
     def get_time_since_last_packet(self) -> float:
         return time.time() - self._last_packet_time
 
-    def _handle_incoming_packet(self, incoming_packet: IncomingPacket):
+    def _handle_incoming_packet(self, incoming: IncomingBuffer):
         try:
-            if not incoming_packet.get_is_buffer():
+            if not incoming.get_is_buffer() or incoming.get_sender_instance_id() == EnvVars.get_instance_index():
                 return
                 
-            self._process_buffer(incoming_packet)
+            self._process_buffer(incoming)
             self._last_packet_time = time.time()
 
         except Exception as e:
@@ -45,7 +45,7 @@ class UDPBufferHandler(UDPBase):
         try:
             UDPSingleton.process_batch_outgoing(
                 self.dequeue_outgoing_packet,
-                lambda msg: self._emit_byte_buffer(msg.packet, msg.optional_addr))
+                lambda msg: self._emit_byte_buffer(msg))
 
         except Exception as e:
             logger.error("Send loop error: %s\n%s", e, traceback.format_exc())
@@ -53,17 +53,19 @@ class UDPBufferHandler(UDPBase):
     def queue_byte_buffer(self, byte_buffer, instance_id: int | None = None):
         addr = None
         if instance_id is not None:
-            addr = UDPSingleton.get_cluster_instance_address(instance_id)
-        queued_packet = OutgoingPacket(byte_buffer, addr)
+            addr, port = UDPSingleton.get_cluster_instance_address(instance_id)
+            queued_packet = OutgoingPacket(byte_buffer, (addr, port))
+        else: 
+            queued_packet = OutgoingPacket(byte_buffer)
         self.queue_outgoing_packet(queued_packet)
 
         queue_size = self._outgoing_queue.qsize()
         if queue_size % 1000 == 0:
             logger.debug('Outgoing buffer queue size: %s', queue_size)
 
-    def _process_buffer(self, incoming_packet: IncomingPacket):
+    def _process_buffer(self, incoming: IncomingBuffer):
         try:
-            self._incoming_processed_packet_queue.put_nowait(incoming_packet)
+            self._incoming_processed_packet_queue.put_nowait(incoming)
             
             queue_size = self._incoming_processed_packet_queue.qsize()
             if queue_size % 1000 == 0:
@@ -72,14 +74,14 @@ class UDPBufferHandler(UDPBase):
         except queue.Full:
             logger.warning(f"Message queue full, dropping buffer.")
 
-    def _emit_byte_buffer(self, byte_buffer: bytes, addr: str | None = None):
+    def _emit_byte_buffer(self, outgoing_packet: OutgoingPacket):
         # Remove duplicate emission when addr is provided
-        if addr is not None:
-            self._emitter.emit_buffer(byte_buffer, addr)
+        if outgoing_packet.optional_addr is not None:
+            self._emitter.emit_buffer(outgoing_packet.packet, outgoing_packet.optional_addr)
         elif EnvVars.get_udp_broadcast():
-            self._emitter.emit_buffer(byte_buffer)
+            self._emitter.emit_buffer(outgoing_packet.packet)
         else: # Loop through each hostname and emit message directly.
-            for instance_id, hostname in UDPSingleton.get_cluster_instance_addresses():
+            for instance_id, hostname, direct_listening_port in UDPSingleton.get_cluster_instance_addresses():
                 if instance_id == EnvVars.get_instance_index():
                     continue
-                self._emitter.emit_buffer(byte_buffer, hostname)
+                self._emitter.emit_buffer(outgoing_packet.packet, (hostname, direct_listening_port))

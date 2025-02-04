@@ -70,9 +70,9 @@ class InstanceLoop:
 
             self._cluster = Cluster()
             if self._instance_role == ClusterRole.LEADER:
-                self._this_instance = ThisLeaderInstance(self._cluster, self, 'localhost', ClusterRole.LEADER, self._on_hot_reload)
+                self._this_instance = ThisLeaderInstance(self._cluster, self, ClusterRole.LEADER, 'localhost', self._on_hot_reload)
             else:
-                self._this_instance = ThisFollowerInstance(self._cluster, self, 'localhost', ClusterRole.FOLLOWER, self._on_hot_reload)
+                self._this_instance = ThisFollowerInstance(self._cluster, self, ClusterRole.FOLLOWER, 'localhost', self._on_hot_reload)
 
             udp_message_handler =  UDPMessageHandler(self._state_loop, self._incoming_processed_message_queue)
             udp_buffer_handler =  UDPBufferHandler(self._state_loop, self._incoming_processed_buffer_queue)

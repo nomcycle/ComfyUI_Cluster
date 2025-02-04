@@ -58,7 +58,8 @@ message ClusterFenceResponse {
 message ClusterAnnounceInstance {
     ClusterMessageHeader header = 1;
     ClusterRole role = 2; 
-    bool all_accounted_for = 3;
+    int32 direct_listening_port = 3;
+    bool all_accounted_for = 4;
 }
 
 message ClusterDistributePrompt {

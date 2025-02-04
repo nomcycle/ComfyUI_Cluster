@@ -11,26 +11,40 @@ from .protobuf.messages_pb2 import (
     ClusterBufferType,
     ClusterDistributeBufferBegin,
     ClusterDistributeBufferAck,
-    ClusterDistributeBufferAllSent,
     ClusterDistributeBufferResend,
     ClusterSignalIdle,
     ClusterRole
 )
 
 class IncomingPacket:
-    def _is_buffer_packet (self, data):
-        return len(data) >= 4 and int.from_bytes(data[:4], byteorder='big') == 123456789
-
     def __init__(self, packet, sender_addr):
         self.packet = packet
-        self.is_buffer = self._is_buffer_packet(self.packet)
         self.sender_addr: str = sender_addr
 
-    def get_is_buffer(self):
-        return self.is_buffer
+    def get_is_buffer(self) -> bool:
+        return False
+
+    @staticmethod
+    def is_buffer(packet):
+        return len(packet) >= 4 and int.from_bytes(packet[:4], byteorder='big') == 123456789
+
+class IncomingBuffer(IncomingPacket):
+    def __init__(self, packet, sender_addr):
+        super().__init__(packet, sender_addr)
+        self._cached_sender_instance_id = int.from_bytes(self.packet[4:8], byteorder='big')
+        self._cached_chunk_id = int.from_bytes(self.packet[8:12], byteorder='big')
+
+    def get_sender_instance_id(self) -> int:
+        return self._cached_sender_instance_id
+
+    def get_chunk_id(self) -> int:
+        return self._cached_chunk_id
+
+    def get_is_buffer(self) -> bool:
+        return True
 
 class IncomingMessage:
-    def __init__(self, 
+    def __init__(self,
                 sender_addr: str,
                 sender_instance_id: int,
                 msg_type_str: str,
@@ -83,11 +97,6 @@ class IncomingMessage:
                    f"\tbuffer_byte_size={buffer_begin.buffer_byte_size},\n"
                    f"\tchunk_count={buffer_begin.chunk_count},\n"
                    f"{header}")
-        elif self.msg_type == ClusterMessageType.DISTRIBUTE_BUFFER_ALL_SENT:
-            buffer_all_sent = ParseDict(self.message, ClusterDistributeBufferAllSent())
-            return (f"\nClusterDistributeBufferAllSent:\n"
-                   f"\tinstance_index={buffer_all_sent.instance_index},\n"
-                   f"{header}")
         elif self.msg_type == ClusterMessageType.DISTRIBUTE_BUFFER_NEXT:
             distribute_prompt = ParseDict(self.message, ClusterDistributePrompt())
             return (f"\nClusterDistributeBufferNext:\n"
@@ -107,6 +116,6 @@ class IncomingMessage:
             return f"Unable to pretty print message, unknown message type: {self.msg_type_str}"
 
 class OutgoingPacket:
-    def __init__(self, packet, optional_addr: str = None):
+    def __init__(self, packet, optional_addr: tuple[str, int] | None = None):
         self.packet = packet
-        self.optional_addr: str = optional_addr
+        self.optional_addr: tuple[str, int] | None = optional_addr

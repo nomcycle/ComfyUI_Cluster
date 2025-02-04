@@ -88,16 +88,16 @@ class UDPMessageHandler(UDPBase):
                             logger.info("Reattempting to send msg: %s to instance: %s (%s/%s)", message_id, instance_id, retry_count, pending.MAX_RETRIES)
                             self._queue_outgoing_to_instance(pending.message, pending_ack.instance_id)
 
-    def _send_message(self, queued_msg):
+    def _send_message(self, queued_msg: OutgoingPacket):
         if queued_msg.optional_addr is not None:
             self._emit_message(queued_msg.packet, queued_msg.optional_addr)
         elif EnvVars.get_udp_broadcast():
             self._emit_message(queued_msg.packet)
         else: # Loop through each hostname and emit message directly.
-            for instance_id, instance_addr in UDPSingleton.get_cluster_instance_addresses():
+            for instance_id, instance_addr, direct_listening_port in UDPSingleton.get_cluster_instance_addresses():
                 if instance_id == EnvVars.get_instance_index():
                     continue
-                self._emit_message(queued_msg.packet, instance_addr)
+                self._emit_message(queued_msg.packet, (instance_addr, direct_listening_port))
 
     def _handle_outgoing_failure(self, message_id: int):
         for pending_key, pending in list(self._pending_acks.items()):
@@ -159,9 +159,8 @@ class UDPMessageHandler(UDPBase):
 
     def _handle_non_ack_message(self, incoming_msg: IncomingMessage):
         if incoming_msg.require_ack:
-            if not EnvVars.get_single_host():
-                self._send_ack(incoming_msg.message_id, incoming_msg.sender_addr)
-            else: self._send_ack(incoming_msg.message_id)
+            addr, port = UDPSingleton.get_cluster_instance_address(incoming_msg.sender_instance_id)
+            self._send_ack(incoming_msg.message_id, (addr, port))
         try:
             # Use put_nowait to avoid blocking indefinitely
             self._incoming_processed_packet_queue.put_nowait(incoming_msg)
@@ -173,12 +172,12 @@ class UDPMessageHandler(UDPBase):
         except queue.Full:
             logger.warning(f"Message queue full, dropping message {incoming_msg.message_id}")
 
-    def _emit_message(self, msg, addr: str | None = None):
-        self._emitter.emit_message(msg, addr)
+    def _emit_message(self, msg, addr_and_port: tuple[str, int] | None = None):
+        self._emitter.emit_message(msg, addr_and_port)
 
-    def _send_ack(self, message_id: int, addr: str | None = None):
-        if addr is not None:
-            logger.debug("Sending ACK for message %d to %s", message_id, addr)
+    def _send_ack(self, message_id: int, addr_and_port: tuple[str, int] | None = None):
+        if addr_and_port is not None:
+            logger.debug("Sending ACK for message %d to %s:%s", message_id, addr_and_port[0], addr_and_port[1])
         else:
             logger.debug("Broadcasting ACK for message %d", message_id)
         ack = ClusterAck()
@@ -186,7 +185,7 @@ class UDPMessageHandler(UDPBase):
         ack.header.message_id = UDPSingleton.iterate_message_id()
         ack.header.sender_instance_id = self._instance_id + 1
         ack.ack_message_id = message_id
-        self._queue_outgoing_to_addr(ack, addr)
+        self._queue_outgoing_to_addr(ack, addr_and_port)
 
     def _handle_ack(self, incoming_msg: IncomingMessage):
         ack = ParseDict(incoming_msg.message, ClusterAck())
@@ -214,16 +213,17 @@ class UDPMessageHandler(UDPBase):
         message.header.sender_instance_id = self._instance_id + 1
         return message_id
 
-    def _create_pending_message(self, message_id: int, message, instance_id: int):
+    def _create_pending_message(self, message_id: int, message, instance_id: int | None = None):
         pending_msg = PendingMessage(message_id, message)
         pending_msg.future = self._state_loop.create_future()
 
         if instance_id is not None:
             pending_msg.pending_acks[instance_id] = PendingInstanceMessage(time.time(), 0, instance_id)
-        for instance_id, _ in UDPSingleton.get_cluster_instance_addresses():
-            if instance_id == self._instance_id:
-                continue
-            pending_msg.pending_acks[instance_id] = PendingInstanceMessage(time.time(), 0, instance_id)
+        else:
+            for instance_id, _, _ in UDPSingleton.get_cluster_instance_addresses():
+                if instance_id == self._instance_id:
+                    continue
+                pending_msg.pending_acks[instance_id] = PendingInstanceMessage(time.time(), 0, instance_id)
         self._pending_acks[message_id] = pending_msg
 
         return pending_msg
@@ -280,8 +280,8 @@ class UDPMessageHandler(UDPBase):
         # if outgoing_queue_size % 100 == 0:
         logger.info('Outgoing message queue size: %s', outgoing_queue_size)
 
-    def _queue_outgoing(self, packet):
-        queued_msg = OutgoingPacket(packet, None)
+    def _queue_outgoing_to_broadcast(self, packet):
+        queued_msg = OutgoingPacket(packet)
         self.queue_outgoing_packet(queued_msg)
         self._log_outgoing_queue_size()
 
@@ -290,13 +290,13 @@ class UDPMessageHandler(UDPBase):
             queued_msg = OutgoingPacket(packet)
             self.queue_outgoing_packet(queued_msg)
             return
-        addr = UDPSingleton.get_cluster_instance_address(instance_id)
-        queued_msg = OutgoingPacket(packet, addr)
+        addr, direct_port = UDPSingleton.get_cluster_instance_address(instance_id)
+        queued_msg = OutgoingPacket(packet, (addr, direct_port))
         self.queue_outgoing_packet(queued_msg)
         self._log_outgoing_queue_size()
 
-    def _queue_outgoing_to_addr(self, packet, addr: str):
-        queued_msg = OutgoingPacket(packet, addr)
+    def _queue_outgoing_to_addr(self, packet, addr_and_port: tuple[str, int] | None = None):
+        queued_msg = OutgoingPacket(packet, addr_and_port)
         self.queue_outgoing_packet(queued_msg)
         self._log_outgoing_queue_size()
 

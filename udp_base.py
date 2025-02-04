@@ -2,16 +2,17 @@ import asyncio
 import queue
 import threading
 import time
+import traceback
 from abc import ABC, abstractmethod
 
 from .sender import UDPEmitter
 from .listener import UDPListener
 from .log import logger
 from .env_vars import EnvVars
-from .queued import IncomingPacket, OutgoingPacket
+from .queued import IncomingPacket, IncomingBuffer, OutgoingPacket
 
 class UDPSingleton:
-    _listener: UDPListener = None
+    _broadcast_listener: UDPListener = None
 
     _incoming_thread = None
     _receive_async_loop = None
@@ -20,7 +21,7 @@ class UDPSingleton:
 
     _incoming_thread_callbacks = []
     _outgoing_thread_callbacks = []
-    _cluster_instance_addressses: [(int, str)] = []
+    _cluster_instance_addresses: list[tuple[int, str, int]] = []
     _message_index: int = 0
     # _incoming_queue: queue.Queue = queue.Queue()
 
@@ -48,16 +49,16 @@ class UDPSingleton:
             cls._outgoing_thread.join()
 
     @classmethod
-    def set_cluster_instance_addresses(cls, addresses: [(int, str)]):
+    def set_cluster_instance_addresses(cls, addresses: list[tuple[int, str, int]]):
         logger.info("Setting cluster addresses: %s", addresses)
         cls._cluster_instance_addressses = addresses
 
     @classmethod
-    def get_cluster_instance_address(cls, instance_id: int) -> str:
-        return cls._cluster_instance_addressses[instance_id][1]
+    def get_cluster_instance_address(cls, instance_id: int) -> tuple[int, str, int]:
+        return (cls._cluster_instance_addressses[instance_id][1], cls._cluster_instance_addressses[instance_id][2])
     
     @classmethod
-    def get_cluster_instance_addresses(cls):
+    def get_cluster_instance_addresses(cls) -> list[tuple[int, str, int]]:
         return cls._cluster_instance_addressses
 
     @classmethod
@@ -82,22 +83,28 @@ class UDPSingleton:
     @classmethod 
     def _incoming_thread_fn(cls):
         logger.info("Starting incoming thread.")
-        cls._listener = UDPListener(EnvVars.get_listen_address(), EnvVars.get_listen_port())
+        cls._broadcast_listener = UDPListener(EnvVars.get_listen_address(), EnvVars.get_broadcast_port())
+        cls._direct_listener = UDPListener(EnvVars.get_listen_address(), EnvVars.get_direct_listen_port())
         step_packet_count = 0
         packet_count = 0
         
         while cls._running:
-            packet, sender_addr = cls._listener.poll()
+            packet, sender_addr = cls._broadcast_listener.poll()
             if packet is None or sender_addr is None:
-                time.sleep(0.001)
-                continue
+                packet, sender_addr = cls._direct_listener.poll()
+                if packet is None or sender_addr is None:
+                    time.sleep(0.001)
+                    continue
 
-            incoming_packet = IncomingPacket(packet, sender_addr)
+            if IncomingPacket.is_buffer(packet):
+                incoming = IncomingBuffer(packet, sender_addr)
+            else: incoming = IncomingPacket(packet, sender_addr)
+
             for callback in cls._incoming_thread_callbacks:
                 try:
-                    callback(incoming_packet)
+                    callback(incoming)
                 except Exception as e:
-                    logger.error(f"Error in receive callback: {e}")
+                    logger.error(f"Error in receive callback: {e}\n{traceback.format_exc()}")
             # cls._incoming_queue.put(IncomingPacket(packet, sender_addr))
             
             packet_count += 1
@@ -118,7 +125,7 @@ class UDPSingleton:
                     if elapsed_time > 0.1:  # Only log if above 10ms
                         logger.debug(f"Outgoing callback: \"{callback.__module__}.{callback.__name__}\" took {elapsed_time:.3f} seconds")
                 except Exception as e:
-                    logger.error(f"Error in send callback: {e}")
+                    logger.error(f"Error in send callback: {e}\n{traceback.format_exc()}")
 
     @classmethod
     def process_batch_outgoing(cls, dequeue_outgoing_packet_fn, emit_fn):
@@ -138,7 +145,7 @@ class UDPSingleton:
                 emit_fn(packet)
                 count += 1
             except Exception as e:
-                logger.error(f"Error emitting packet: {e}")
+                logger.error(f"Error emitting packet: {e}\n{traceback.format_exc()}")
 
         time.sleep(0.001)
             
@@ -155,7 +162,7 @@ class UDPBase(ABC):
         self._outgoing_counter = 0
 
         self._incoming_processed_packet_queue = incoming_processed_packet_queue
-        self._emitter = UDPEmitter(EnvVars.get_send_port())
+        self._emitter = UDPEmitter(EnvVars.get_broadcast_port())
 
     def outgoing_packets_queued(self):
         return self._outgoing_counter > 0

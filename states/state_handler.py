@@ -3,7 +3,7 @@ import time
 
 from ..log import logger
 from ..instance import ThisInstance
-from ..queued import IncomingMessage
+from ..queued import IncomingMessage, IncomingBuffer
 
 class StateHandler:
     from .state_result import StateResult
@@ -31,5 +31,5 @@ class StateHandler:
     async def handle_message(self, current_state: int, incoming_message: IncomingMessage) -> StateResult | None:
         raise NotImplementedError("handle_message not implemented")
 
-    async def handle_buffer(self, current_state: int, byte_buffer, addr: str) -> StateResult | None:
+    async def handle_buffer(self, current_state: int, incoming_buffer: IncomingBuffer) -> StateResult | None:
         raise NotImplementedError("handle_buffer not implemented")

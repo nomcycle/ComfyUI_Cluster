@@ -9,8 +9,8 @@ class EnvVars:
     _udp_broadcast = None
     _udp_hostnames = None
     _single_host = None
-    _listen_port = None
-    _send_port = None
+    _direct_listen_port = None
+    _broadcast_port = None
     _listen_address = None
     _comfy_port = None
 
@@ -50,7 +50,9 @@ class EnvVars:
         if not cls._udp_broadcast:
             hostnames = os.getenv('COMFY_CLUSTER_UDP_HOSTNAMES')
             if hostnames is not None:
-                cls._udp_hostnames = [(i, h.strip()) for i, h in enumerate(hostnames.split(','))]
+                for i, h in enumerate(hostnames.split(',')):
+                    hostname, port = h.split(':')
+                    cls._udp_hostnames.append((i, (hostname.strip(), int(port.strip()))))
 
         # Parse single host flag
         cls._single_host = os.getenv('COMFY_CLUSTER_SINGLE_HOST', 'false').lower() == 'true'
@@ -60,16 +62,16 @@ class EnvVars:
         cls._listen_address = os.getenv('COMFY_CLUSTER_LISTEN_ADDRESS', '0.0.0.0')
 
         # Parse listen port
-        listen_port = os.getenv('COMFY_CLUSTER_LISTEN_PORT', '9997')
+        direct_listen_port = os.getenv('COMFY_CLUSTER_DIRECT_LISTEN_PORT', '9997')
         try:
-            cls._listen_port = int(listen_port)
+            cls._direct_listen_port = int(direct_listen_port)
         except ValueError:
             raise Exception("COMFY_CLUSTER_LISTEN_PORT must be an integer value")
 
         # Parse send port
-        send_port = os.getenv('COMFY_CLUSTER_SEND_PORT', '9997')
+        broadcast_port = os.getenv('COMFY_CLUSTER_BROADCAST_PORT', '9997')
         try:
-            cls._send_port = int(send_port)
+            cls._broadcast_port = int(broadcast_port)
         except ValueError:
             raise Exception("COMFY_CLUSTER_SEND_PORT must be an integer value")
 
@@ -105,7 +107,7 @@ class EnvVars:
         return cls._udp_broadcast
 
     @classmethod
-    def get_udp_hostnames(cls) -> [str]:
+    def get_udp_hostnames(cls) -> list[tuple[int, str, int]]:
         if cls._udp_hostnames is None:
             cls.load()
         return cls._udp_hostnames
@@ -129,16 +131,16 @@ class EnvVars:
         return cls._listen_address
 
     @classmethod
-    def get_listen_port(cls) -> int:
-        if cls._listen_port is None:
+    def get_direct_listen_port(cls) -> int:
+        if cls._direct_listen_port is None:
             cls.load()
-        return cls._listen_port
+        return cls._direct_listen_port
 
     @classmethod
-    def get_send_port(cls) -> int:
-        if cls._send_port is None:
+    def get_broadcast_port(cls) -> int:
+        if cls._broadcast_port is None:
             cls.load()
-        return cls._send_port
+        return cls._broadcast_port
 
     @classmethod
     def get_comfy_port(cls) -> int:
