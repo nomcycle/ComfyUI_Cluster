@@ -26,21 +26,23 @@ class QueuedMessage:
         self.message = message
         self.addr: str = addr
 
-class OtherInstance:
-    def __init__(self, address: str, role: int, instance_id: int):
+class Instance:
+    def __init__(self, address: str, role: int):
         self.all_accounted_for: bool = False
         self.address: str = address
         self.role: int = role
+
+class OtherInstance(Instance):
+    def __init__(self, address: str, role: int, instance_id: int):
+        super().__init__(address, role)
         self.instance_id = instance_id
 
-class ThisInstance:
+class ThisInstance(Instance):
     def __init__(self, cluster: Cluster, instance_loop: 'InstanceLoop', address: str, role: int, on_hot_reload):
+        super().__init__(address, role)
         self.cluster = cluster
-        self._instance_loop = instance_loop
-        self.all_accounted_for: bool = False
-        self.address: str = address
-        self.role: int = role
         self._msg_queue = queue.Queue()
+        self._instance_loop = instance_loop
 
         if EnvVars.get_hot_reload():
             from .states.signal_hot_reload_state import SignalHotReloadStateHandler

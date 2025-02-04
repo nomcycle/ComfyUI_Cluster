@@ -13,7 +13,7 @@ from .idle_state import IdleStateHandler
 from .state_result import StateResult
 from ..env_vars import EnvVars
 
-from ..instance import ThisInstance, OtherInstance, OtherLeaderInstance, OtherFollowerInstance
+from ..instance import Instance, ThisInstance, OtherInstance, OtherLeaderInstance, OtherFollowerInstance
 from ..queued import IncomingMessage
 from ..udp_base import UDPSingleton
 
@@ -39,7 +39,7 @@ class AnnounceInstanceStateHandler(StateHandler):
         self.send_announce()
         await asyncio.sleep(3)
 
-    def register_instance(self, role, instance_id, instance_addr, all_accounted_for: bool):
+    def register_instance(self, role, instance_id, instance_addr, all_accounted_for: bool) -> Instance:
         other_instance = None
 
         if role == ClusterRole.LEADER:
@@ -61,7 +61,7 @@ class AnnounceInstanceStateHandler(StateHandler):
         else:
             logger.info("New cluster instance '%s' discovered at %s", incoming_message.sender_instance_id, incoming_message.sender_addr)
 
-            self.register_instance(announce_instance.role, incoming_message.sender_instance_id, incoming_message.sender_addr, announce_instance.all_accounted_for)
+            other_instance = self.register_instance(announce_instance.role, incoming_message.sender_instance_id, incoming_message.sender_addr, announce_instance.all_accounted_for)
 
             if self._instance.cluster.all_accounted_for():
                 logger.info("All cluster instances connected (%d total)", self._instance.cluster.instance_count)

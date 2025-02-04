@@ -159,7 +159,9 @@ class UDPMessageHandler(UDPBase):
 
     def _handle_non_ack_message(self, incoming_msg: IncomingMessage):
         if incoming_msg.require_ack:
-            self._send_ack(incoming_msg.message_id, incoming_msg.sender_addr)
+            if not EnvVars.get_single_host():
+                self._send_ack(incoming_msg.message_id, incoming_msg.sender_addr)
+            else: self._send_ack(incoming_msg.message_id)
         try:
             # Use put_nowait to avoid blocking indefinitely
             self._incoming_processed_packet_queue.put_nowait(incoming_msg)
@@ -174,8 +176,11 @@ class UDPMessageHandler(UDPBase):
     def _emit_message(self, msg, addr: str | None = None):
         self._emitter.emit_message(msg, addr)
 
-    def _send_ack(self, message_id: int, addr: str):
-        logger.debug("Sending ACK for message %d to %s", message_id, addr)
+    def _send_ack(self, message_id: int, addr: str | None = None):
+        if addr is not None:
+            logger.debug("Sending ACK for message %d to %s", message_id, addr)
+        else:
+            logger.debug("Broadcasting ACK for message %d", message_id)
         ack = ClusterAck()
         ack.header.type = ClusterMessageType.ACK
         ack.header.message_id = UDPSingleton.iterate_message_id()
@@ -282,7 +287,8 @@ class UDPMessageHandler(UDPBase):
 
     def _queue_outgoing_to_instance(self, packet, instance_id: int | None):
         if instance_id is None:
-            self._queue_outgoing(packet)
+            queued_msg = OutgoingPacket(packet)
+            self.queue_outgoing_packet(queued_msg)
             return
         addr = UDPSingleton.get_cluster_instance_address(instance_id)
         queued_msg = OutgoingPacket(packet, addr)

@@ -318,7 +318,7 @@ class ExecutingStateHandler(StateHandler):
                 self._instance_data.set_chunks_bitfield(sender_instance, chunks_bitfield)
 
                 # Check progress less frequently
-                if chunk_id % 100 == 0 or (chunk_id == len(self._instance_data.get_expected_chunk_ids(sender_instance)) - 1):
+                if chunk_id % 1000 == 0 or (chunk_id == len(self._instance_data.get_expected_chunk_ids(sender_instance)) - 1):
                     total_chunks, expected_total = self._buffer_progress(sender_instance)
                     logger.debug(f"Received chunk {chunk_id} from instance {sender_instance}. Total: {total_chunks}/{expected_total}")
         return None
