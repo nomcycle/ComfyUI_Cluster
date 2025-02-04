@@ -201,7 +201,7 @@ class ExecutingStateHandler(StateHandler):
 
     async def handle_receiving_state(self):
         current_time = time.time()
-        if self._instance.cluster.udp_buffer_handler.get_incoming_buffer_queue_size() == 0 or current_time - self._time_since_polling_chunk_progress < 5:
+        if self._instance.cluster.udp_buffer_handler.get_incoming_buffer_queue_size() == 0 or current_time - self._time_since_polling_chunk_progress < 1:
             await asyncio.sleep(0.0001)
             return None
 

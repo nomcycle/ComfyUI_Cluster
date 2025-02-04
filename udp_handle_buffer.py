@@ -41,7 +41,7 @@ class UDPBufferHandler(UDPBase):
     def _outgoing_thread_callback(self):
         try:
             UDPSingleton.process_batch_outgoing(
-                self._outgoing_queue,
+                self.dequeue_outgoing_packet,
                 lambda msg: self._emit_byte_buffer(msg.packet, msg.optional_addr))
 
         except Exception as e:
@@ -51,7 +51,8 @@ class UDPBufferHandler(UDPBase):
         addr = None
         if instance_id is not None:
             addr = UDPSingleton.get_cluster_instance_address(instance_id)
-        self._outgoing_queue.put_nowait(OutgoingPacket(byte_buffer, addr))
+        queued_packet = OutgoingPacket(byte_buffer, addr)
+        self.queue_outgoing_packet(queued_packet)
 
         queue_size = self._outgoing_queue.qsize()
         if queue_size % 1000 == 0:

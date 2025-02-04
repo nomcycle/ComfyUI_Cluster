@@ -56,7 +56,7 @@ class UDPMessageHandler(UDPBase):
         try:
             self._process_pending_messages()
             UDPSingleton.process_batch_outgoing(
-                self._outgoing_queue,
+                self.dequeue_outgoing_packet,
                 lambda msg: self._send_message(msg))
 
         except Exception as e:
@@ -278,7 +278,7 @@ class UDPMessageHandler(UDPBase):
 
     def _queue_outgoing(self, packet):
         queued_msg = OutgoingPacket(packet, None)
-        self._outgoing_queue.put_nowait(queued_msg)
+        self.queue_outgoing_packet(queued_msg)
         self._log_outgoing_queue_size()
 
     def _queue_outgoing_to_instance(self, packet, instance_id: int | None):
@@ -287,12 +287,12 @@ class UDPMessageHandler(UDPBase):
             return
         addr = UDPSingleton.get_cluster_instance_address(instance_id)
         queued_msg = OutgoingPacket(packet, addr)
-        self._outgoing_queue.put_nowait(queued_msg)
+        self.queue_outgoing_packet(queued_msg)
         self._log_outgoing_queue_size()
 
     def _queue_outgoing_to_addr(self, packet, addr: str):
         queued_msg = OutgoingPacket(packet, addr)
-        self._outgoing_queue.put_nowait(queued_msg)
+        self.queue_outgoing_packet(queued_msg)
         self._log_outgoing_queue_size()
 
     def get_cached_local_addreses(self):

@@ -8,7 +8,7 @@ from .sender import UDPEmitter
 from .listener import UDPListener
 from .log import logger
 from .env_vars import EnvVars
-from .queued import IncomingPacket
+from .queued import IncomingPacket, OutgoingPacket
 
 class UDPSingleton:
     _listener: UDPListener = None
@@ -89,7 +89,7 @@ class UDPSingleton:
         while cls._running:
             packet, sender_addr = cls._listener.poll()
             if packet is None or sender_addr is None:
-                time.sleep(0.00001)
+                time.sleep(0.0001)
                 continue
 
             incoming_packet = IncomingPacket(packet, sender_addr)
@@ -121,42 +121,24 @@ class UDPSingleton:
                     logger.error(f"Error in send callback: {e}")
 
     @classmethod
-    def process_batch_outgoing(cls, outgoing_queue: queue.Queue, emit_fn):
-        if outgoing_queue.qsize() == 0:
-            time.sleep(0.001)
-            return
+    def process_batch_outgoing(cls, dequeue_outgoing_packet_fn, emit_fn):
 
         # Buffer size is 262144, MTU is typically 1500 bytes
         # So we can batch around 174 packets at a time
         batch_size = 174
         batch = [None] * batch_size
         count = 0
-        
-        while True:
+
+        while count < batch_size:
             # Fast batch collection
-            for i in range(batch_size):
-                try:
-                    batch[i] = outgoing_queue.get_nowait()
-                    outgoing_queue.task_done()
-                    count += 1
-                    # if count % 10 == 0:
-                    #     logger.debug('Outgoing queue size: %s', outgoing_queue.qsize())
-                except queue.Empty:
-                    break
-                    
-            if count == 0:
+            packet = dequeue_outgoing_packet_fn()
+            if packet is None:
                 break
-                
             try:
-                # Process entire batch at once
-                for i in range(count):
-                    emit_fn(batch[i])
+                emit_fn(packet)
+                count += 1
             except Exception as e:
-                logger.error(f"Error processing outgoing batch: {e}")
-            finally:
-                # Reset counter and clear references
-                count = 0
-                break
+                logger.error(f"Error emitting packet: {e}")
 
         time.sleep(0.001)
             
@@ -168,9 +150,30 @@ class ACKResult:
 
 class UDPBase(ABC):
     def __init__(self, incoming_processed_packet_queue: queue.Queue):
+
         self._outgoing_queue: queue.Queue = queue.Queue()
+        self._outgoing_counter = 0
+
         self._incoming_processed_packet_queue = incoming_processed_packet_queue
         self._emitter = UDPEmitter(EnvVars.get_send_port())
+
+    def outgoing_packets_queued(self):
+        return self._outgoing_counter > 0
+
+    def queue_outgoing_packet(self, packet: OutgoingPacket):
+        self._outgoing_queue.put_nowait(packet)
+        self._outgoing_counter += 1
+    
+    def dequeue_outgoing_packet(self) -> OutgoingPacket:
+        if self._outgoing_counter == 0:
+            return None
+        try:
+            outgoing_packet = self._outgoing_queue.get_nowait()
+            self._outgoing_counter -= 1
+            self._outgoing_queue.task_done()
+        except queue.Empty:
+            outgoing_packet = None
+        return outgoing_packet
 
     @abstractmethod
     def _handle_incoming_packet(self, packet, sender_addr: str):
