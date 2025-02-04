@@ -90,7 +90,7 @@ class InstanceLoop:
         try:
             while self._running:
                 await self._this_instance.tick_state()
-                await asyncio.sleep(0.0001)
+                await asyncio.sleep(0.001)
         except Exception as e:
             logger.error("State loop failed: %s", str(e), exc_info=True)
             raise
@@ -124,7 +124,7 @@ class InstanceLoop:
                     except queue.Empty:
                         break
                 
-                await asyncio.sleep(0.0001)
+                await asyncio.sleep(0.001)
         except Exception as e:
             logger.error("Packet loop failed: %s", str(e), exc_info=True)
             raise

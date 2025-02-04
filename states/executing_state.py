@@ -33,6 +33,7 @@ class ThisInstanceState(Enum):
     EMITTING = auto()
     AWAITING_CHUNKS = auto()
     ALL_DEPENDENCIES_RESOLVED = auto()
+    DONE = auto()
 
 class OtherInstanceState(Enum):
     AWAITING_BEGIN_BUFFER = auto()
@@ -119,7 +120,6 @@ class ExecutingStateHandler(StateHandler):
                          ClusterState.EXECUTING,
                          ClusterMessageType.DISTRIBUTE_BUFFER_BEGIN         |
                          ClusterMessageType.DISTRIBUTE_BUFFER_RESEND        |
-                         ClusterMessageType.DISTRIBUTE_BUFFER_ALL_SENT      |
                          ClusterMessageType.DISTRIBUTE_BUFFER_NEXT          |
                          ClusterMessageType.DISTRIBUTE_BUFFER_ACK)
         logger.debug("Initialized ExecutingStateHandler")
@@ -201,8 +201,12 @@ class ExecutingStateHandler(StateHandler):
 
     async def handle_receiving_state(self):
         current_time = time.time()
-        if self._instance.cluster.udp_buffer_handler.get_incoming_buffer_queue_size() == 0 or current_time - self._time_since_polling_chunk_progress < 1:
-            await asyncio.sleep(0.0001)
+        incoming_queue_size = self._instance.cluster.udp_buffer_handler.get_incoming_buffer_queue_size()
+        time_since_last_packet = self._instance.cluster.udp_buffer_handler.get_time_since_last_packet()
+        time_since_last_poll = current_time - self._time_since_polling_chunk_progress
+
+        if incoming_queue_size == 0 or time_since_last_packet < 1 or time_since_last_poll < 1:
+            await asyncio.sleep(0.001)
             return None
 
         self._time_since_polling_chunk_progress = current_time
@@ -243,6 +247,9 @@ class ExecutingStateHandler(StateHandler):
                 await self.handle_sending_state()
             elif self._this_instance_state == ThisInstanceState.AWAITING_CHUNKS:
                 await self.handle_receiving_state()
+            elif self._this_instance_state == ThisInstanceState.DONE:
+                from .idle_state import IdleStateHandler
+                return StateResult(current_state, self, ClusterState.IDLE, IdleStateHandler(self._instance))
 
     async def handle_message(self, current_state: int, incoming_message: IncomingMessage) -> StateResult | None:
         with self._thread_lock:
@@ -411,4 +418,6 @@ class ExecutingStateHandler(StateHandler):
         batch_tensor = torch.from_numpy(array).reshape(batch_shape)
         
         logger.info("Tensor distribution complete. Final shape: %s", batch_tensor.shape)
+
+        self._this_instance_state = ThisInstanceState.DONE
         return batch_tensor

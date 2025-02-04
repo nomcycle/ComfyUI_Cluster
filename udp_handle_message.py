@@ -233,7 +233,6 @@ class UDPMessageHandler(UDPBase):
     async def send_and_wait(self, message, instance_id: int | None = None):
         if not message.header.require_ack:
             _ = self.send_no_wait(message, instance_id)
-            await asyncio.sleep(0)
             return ACKResult(True, None)
 
         # with self._outgoing_thread_lock:

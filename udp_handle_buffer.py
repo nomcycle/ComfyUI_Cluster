@@ -20,12 +20,15 @@ class UDPBufferHandler(UDPBase):
         super().__init__(incoming_processed_packet_queue)
         logger.info("Initializing UDP handler")
         self._state_loop = state_loop
-        self._last_packet_time = 0
+        self._last_packet_time: float = time.time()
         UDPSingleton.add_handle_incoming_packet_callback(self._handle_incoming_packet)
         UDPSingleton.add_outgoing_thread_callback(self._outgoing_thread_callback)
 
-    def get_incoming_buffer_queue_size(self):
+    def get_incoming_buffer_queue_size(self) -> int:
         return self._incoming_processed_packet_queue.qsize
+
+    def get_time_since_last_packet(self) -> float:
+        return time.time() - self._last_packet_time
 
     def _handle_incoming_packet(self, incoming_packet: IncomingPacket):
         try:

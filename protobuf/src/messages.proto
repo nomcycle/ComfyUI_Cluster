@@ -23,7 +23,6 @@ enum ClusterMessageType {
     SIGNAL_IDLE = 8;
     DISTRIBUTE_PROMPT = 16;
     DISTRIBUTE_BUFFER_BEGIN = 32;
-    DISTRIBUTE_BUFFER_ALL_SENT = 64;
     DISTRIBUTE_BUFFER_NEXT = 128;
     DISTRIBUTE_BUFFER_RESEND = 256;
     DISTRIBUTE_BUFFER_ACK = 512;
@@ -87,11 +86,6 @@ message ClusterDistributeBufferAck {
 
 message ClusterDistributeBufferNext {
     ClusterMessageHeader header = 1;
-}
-
-message ClusterDistributeBufferAllSent {
-    ClusterMessageHeader header = 1;
-    int32 instance_index = 3;
 }
 
 message ClusterDistributeBufferResend {
