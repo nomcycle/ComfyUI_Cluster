@@ -366,6 +366,10 @@ class ExecutingStateHandler(StateHandler):
             chunk_count=chunk_count
         )
 
+        result = await self._instance.cluster.udp_message_handler.request_state_thread_safe(ClusterState.EXECUTING)
+        if not result.success:
+            return
+
         # Wait until it's our turn to distribute.
         while self._this_instance_state != ThisInstanceState.EMITTING:
             logger.debug("Awaiting our turn to distribute. Instance index currently distributing: %d, our instance index: %d", self._current_distribution_instance_index, instance_index)

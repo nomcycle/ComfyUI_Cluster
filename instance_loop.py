@@ -89,7 +89,7 @@ class InstanceLoop:
     async def _state_loop_async(self):
         try:
             while self._running:
-                await self._this_instance.tick_state()
+                await self._this_instance.handle_state()
                 await asyncio.sleep(0.001)
         except Exception as e:
             logger.error("State loop failed: %s", str(e), exc_info=True)

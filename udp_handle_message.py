@@ -9,7 +9,7 @@ from typing import Dict
 import threading
 
 from google.protobuf.json_format import ParseDict
-from .protobuf.messages_pb2 import (ClusterMessageType, ClusterAck)
+from .protobuf.messages_pb2 import (ClusterMessageType, ClusterAck, ClusterRequestState, ClusterResolvedState, ClusterState)
 
 from .log import logger
 from .env_vars import EnvVars
@@ -31,6 +31,8 @@ class UDPMessageHandler(UDPBase):
         self._pending_acks: Dict[int, PendingMessage] = {}
         self._state_loop = state_loop
         self._local_ips: [str] = None
+        self._awaiting_state_resolves: Dict[int, set[int]] = {}
+        self._awaiting_state_resolve_futures: Dict[str, asyncio.Future] = {}
 
         self._outgoing_thread_lock = threading.Lock()
 
@@ -155,12 +157,16 @@ class UDPMessageHandler(UDPBase):
         if incoming_msg.msg_type == ClusterMessageType.ACK:
             self._handle_ack(incoming_msg)
             return
-        self._handle_non_ack_message(incoming_msg)
+        else:
+            if incoming_msg.msg_type == ClusterMessageType.RESOLVED_STATE:
+                self._handle_resolved_state(incoming_msg)
+            else: self._handle_non_ack_message(incoming_msg)
+
+            if incoming_msg.require_ack:
+                addr, port = UDPSingleton.get_cluster_instance_address(incoming_msg.sender_instance_id)
+                self._send_ack(incoming_msg.message_id, (addr, port))
 
     def _handle_non_ack_message(self, incoming_msg: IncomingMessage):
-        if incoming_msg.require_ack:
-            addr, port = UDPSingleton.get_cluster_instance_address(incoming_msg.sender_instance_id)
-            self._send_ack(incoming_msg.message_id, (addr, port))
         try:
             # Use put_nowait to avoid blocking indefinitely
             self._incoming_processed_packet_queue.put_nowait(incoming_msg)
@@ -228,19 +234,107 @@ class UDPMessageHandler(UDPBase):
 
         return pending_msg
 
+    def _handle_resolved_state(self, incoming_msg: IncomingMessage):
+        resolve_state = ParseDict(incoming_msg.message, ClusterResolvedState())
+
+        if resolve_state.request_message_id in self._awaiting_state_resolves:
+
+            if incoming_msg.sender_instance_id in self._awaiting_state_resolves[resolve_state.request_message_id]:
+                self._awaiting_state_resolves[resolve_state.request_message_id].remove(incoming_msg.sender_instance_id)
+            else:
+                logger.error("Duplicate resolve state from %s for request message ID: %s", incoming_msg.sender_instance_id, resolve_state.request_message_id)
+
+            if len(self._awaiting_state_resolves[resolve_state.request_message_id]) == 0:
+                del self._awaiting_state_resolves[resolve_state.request_message_id]
+                self._complete_future(self._awaiting_state_resolve_futures[resolve_state.request_message_id], True, None)
+        else:
+            logger.error("No awaiting state resolves for request message ID: %s", resolve_state.request_message_id)
+
+    def _create_request_state_msg(self, state: ClusterState):
+        message = ClusterRequestState()
+        message.header.type = ClusterMessageType.REQUEST_STATE
+        message.header.require_ack = True
+        message.state = state
+        return message
+
+    def _prepare_request_state_msg(self, message: ClusterRequestState, future: asyncio.Future) -> tuple[int, PendingMessage]:
+        message_id = self._prepare_message(message)
+        pending_msg = self._create_pending_message(message_id, message)
+
+        instance_ids = set(range(EnvVars.get_instance_count()))
+        instance_ids.remove(EnvVars.get_instance_index())
+        self._awaiting_state_resolves[message_id] = instance_ids
+
+        self._awaiting_state_resolve_futures[message_id] = future
+        return message_id, pending_msg
+
+    async def _execute_coroutine_thread_safe(self, coroutine):
+        current_loop = asyncio.get_running_loop()
+        future = current_loop.create_future()
+
+        def done_callback(task):
+            try:
+                result = task.result()
+                current_loop.call_soon_threadsafe(future.set_result, result)
+            except Exception as e:
+                current_loop.call_soon_threadsafe(future.set_exception, e)
+
+        try:
+            asyncio.run_coroutine_threadsafe(
+                coroutine,
+                self._state_loop
+            ).add_done_callback(done_callback)
+        except Exception as e:
+            logger.exception('Encountered exception while attempting to execute coroutine on another asyncio loop:\n%s', e)
+
+        return await future
+
+    async def request_state_thread_safe(self, state: ClusterState):
+        return await self._execute_coroutine_thread_safe(self.request_state(state))
+
+    async def request_state(self, state: ClusterState):
+        message = self._create_request_state_msg(state)
+        future = self._state_loop.create_future()
+        message_id, pending_msg = self._prepare_request_state_msg(message, future)
+
+        logger.debug("Requesting state: %s with message id: %s", state, message_id)
+        self._queue_outgoing_to_instance(message, None)
+
+        result = await pending_msg.future
+        if not result.success:
+            return result
+
+        result = await self._awaiting_state_resolve_futures[message_id]
+        logger.debug("Resolved state: %s message ID: %s", state, message_id)
+        return result
+
+    def _create_resolve_state_msg(self, request_state_msg: ClusterRequestState, message_id: int):
+        message = ClusterResolvedState()
+        message.header.type = ClusterMessageType.RESOLVED_STATE
+        message.header.require_ack = True
+        message.state = request_state_msg.state
+        message.request_message_id = message_id
+        return message
+
+    async def resolve_state_thread_safe(self, request_state_msg: ClusterRequestState, message_id: int, instance_id: int | None = None):
+        return await self._execute_coroutine_thread_safe(self.resolve_state(request_state_msg, message_id, instance_id))
+
+    async def resolve_state(self, request_state_msg: ClusterRequestState, message_id: int, instance_id: int | None = None):
+        return await self.send_and_wait(self._create_resolve_state_msg(request_state_msg, message_id), instance_id)
+
     def send_no_wait(self, message, instance_id: int | None = None):
-        message_id = None
-        # with self._outgoing_thread_lock:
         message_id = self._prepare_message(message)
         self._queue_outgoing_to_instance(message, instance_id)
         return message_id
+
+    async def send_and_wait_thread_safe(self, message, instance_id: int | None = None):
+        return await self._execute_coroutine_thread_safe(self.send_and_wait(message, instance_id))
 
     async def send_and_wait(self, message, instance_id: int | None = None):
         if not message.header.require_ack:
             _ = self.send_no_wait(message, instance_id)
             return ACKResult(True, None)
 
-        # with self._outgoing_thread_lock:
         message_id = self._prepare_message(message)
         pending_msg = self._create_pending_message(message_id, message, instance_id)
 
@@ -251,29 +345,6 @@ class UDPMessageHandler(UDPBase):
             logger.error("No ACK for msg %s: %s", message_id, result.error_msg)
 
         return result
-
-    async def send_and_wait_thread_safe(self, message, instance_id: int | None = None):
-        current_loop = asyncio.get_running_loop()
-        future = current_loop.create_future()
-        
-        def done_callback(task):
-            try:
-                result = task.result()
-                current_loop.call_soon_threadsafe(future.set_result, result)
-            except Exception as e:
-                current_loop.call_soon_threadsafe(future.set_exception, e)
-        
-        coroutine = self.send_and_wait(message, instance_id)
-
-        try:
-            asyncio.run_coroutine_threadsafe(
-                coroutine,
-                self._state_loop
-            ).add_done_callback(done_callback)
-        except Exception as e:
-            logger.exception('Encountered exception while attempting to execute coroutine on another asyncio loop:\n%s', e)
-        
-        return await future
 
     def _log_outgoing_queue_size(self):
         outgoing_queue_size = self._outgoing_queue.qsize()

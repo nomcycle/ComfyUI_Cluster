@@ -10,13 +10,15 @@ import math
 from .log import logger
 from .protobuf.messages_pb2 import (
     ClusterState, ClusterMessageType, 
-    ClusterDistributePrompt, ClusterRole
+    ClusterDistributePrompt, ClusterRole,
+    ClusterRequestState
 )
 
 from .cluster import Cluster
 from .states.state_result import StateResult
 from .env_vars import EnvVars
 from .queued import IncomingMessage, IncomingPacket, IncomingBuffer
+
 if TYPE_CHECKING:
     from .instance_loop import InstanceLoop
 
@@ -44,23 +46,18 @@ class ThisInstance(Instance):
         self.cluster = cluster
         self._msg_queue = queue.Queue()
         self._instance_loop = instance_loop
+        self._on_host_reload = on_hot_reload
+        self._pending_state_request_msg: IncomingMessage | None = None
+        self._queued_state_request_msgs: queue.Queue[IncomingMessage] = queue.Queue()
 
         if EnvVars.get_hot_reload():
             from .states.signal_hot_reload_state import SignalHotReloadStateHandler
-            self._signal_hot_reload_state_handler = SignalHotReloadStateHandler(self, on_hot_reload)
+            self._signal_hot_reload_state_handler = SignalHotReloadStateHandler(self, self._on_host_reload)
             self._current_state = ClusterState.INITIALIZE
         else:
             from .states.announce_state_handler import AnnounceInstanceStateHandler
             self._current_state_handler = AnnounceInstanceStateHandler(self)
             self._current_state = ClusterState.POPULATING
-
-    async def tick_state(self):
-
-        if not self._current_state_handler.check_current_state(self._current_state):
-            return
-
-        state_result: StateResult = await self._current_state_handler.handle_state(self._current_state)
-        self.handle_state_result(state_result)
 
     def buffer_queue_empty(self) -> bool:
         return self._instance_loop.buffer_queue_empty()
@@ -72,9 +69,9 @@ class ThisInstance(Instance):
 
         logger.info("Received request to distribute prompt")
 
-        while self._current_state != ClusterState.IDLE:
-            logger.info("Instance is in state: %s, waiting for idle...", self._current_state)
-            await asyncio.sleep(0.5)
+        # while self._current_state != ClusterState.IDLE:
+        #     logger.info("Instance is in state: %s, waiting for idle...", self._current_state)
+        #     await asyncio.sleep(0.5)
 
         message = ClusterDistributePrompt()
         message.header.type = ClusterMessageType.DISTRIBUTE_PROMPT
@@ -94,35 +91,51 @@ class ThisInstance(Instance):
         executing_state_handler: ExecutingStateHandler = self._current_state_handler
         return await executing_state_handler.distribute_tensor(tensor)
 
-    def handle_state_result(self, state_result):
-        # logger.info('Tick handle_state_result')
-        if state_result is None or state_result.next_state is None:
+    async def poll_state_requests(self):
+        try:
+            if not self._pending_state_request_msg:
+                self._pending_state_request_msg = self._queued_state_request_msgs.get_nowait()
+
+            if self._pending_state_request_msg:
+                state_request = ParseDict(self._pending_state_request_msg.message, ClusterRequestState())
+                if state_request.state == self._current_state:
+                    await self.cluster.udp_message_handler.resolve_state_thread_safe(state_request, self._pending_state_request_msg.message_id, self._pending_state_request_msg.sender_instance_id)
+                    self._pending_state_request_msg = None
+
+        except queue.Empty:
             return
 
-        if state_result.next_state != self._current_state:
-            logger.debug("State transition: %s -> %s", self._current_state, state_result.next_state)
-            self._current_state = state_result.next_state
-            self._current_state_handler = state_result.next_state_handler
+    def handle_state_result(self, state_result: StateResult):
+        # logger.info('Tick handle_state_result')
+        if state_result is not None and state_result.next_state is not None:
+            if state_result.next_state != self._current_state:
+                logger.debug("State transition: %s -> %s", self._current_state, state_result.next_state)
+                self._current_state = state_result.next_state
+                self._current_state_handler = state_result.next_state_handler
+
+    async def handle_state(self):
+        if not self._current_state_handler.check_current_state(self._current_state):
+            return
+        await self.poll_state_requests()
+        state_result: StateResult = await self._current_state_handler.handle_state(self._current_state)
+        self.handle_state_result(state_result)
 
     async def handle_buffer(self, incoming_buffer: IncomingBuffer):
-        # logger.info('Tick handle_buffer')
-
-        if self._current_state != ClusterState.EXECUTING:
-            logger.debug("Instance not in EXECUTING state, dropping buffer")
+        if not self._current_state_handler.check_current_state(self._current_state):
             return
+        await self.poll_state_requests()
         state_result = await self._current_state_handler.handle_buffer(self._current_state, incoming_buffer)
         self.handle_state_result(state_result)
 
-    async def handle_message(self, incoming_message: IncomingMessage):
-        # logger.info('Tick handle_message')
 
-        if incoming_message.msg_type == ClusterMessageType.SIGNAL_HOT_RELOAD:
-            await self._signal_hot_reload_state_handler.handle_message(self._current_state, incoming_message)
-            return
+    async def handle_message(self, incoming_message: IncomingMessage):
+        if incoming_message.msg_type == ClusterMessageType.REQUEST_STATE:
+            self._queued_state_request_msgs.put_nowait(incoming_message)
 
         if not self._current_state_handler.check_message_type(incoming_message.msg_type):
             return
 
+        await self.poll_state_requests()
         state_result = await self._current_state_handler.handle_message(self._current_state, incoming_message)
         self.handle_state_result(state_result)
 

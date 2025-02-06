@@ -13,7 +13,7 @@ class PendingMessage:
         self.message = message
         self.pending_acks: Dict[int, PendingInstanceMessage] = {} # Dict of addr -> {timestamp: float, retry_count: int}
         self.future = None
-        self.MAX_RETRIES: int = 10
+        self.MAX_RETRIES: int = 100
 
     def increment_retry(self, instance_id: int):
         if instance_id not in self.pending_acks:

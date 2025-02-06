@@ -21,11 +21,13 @@ enum ClusterMessageType {
     SIGNAL_HOT_RELOAD = 2;
     ANNOUNCE = 4;
     SIGNAL_IDLE = 8;
-    DISTRIBUTE_PROMPT = 16;
-    DISTRIBUTE_BUFFER_BEGIN = 32;
-    DISTRIBUTE_BUFFER_NEXT = 128;
-    DISTRIBUTE_BUFFER_RESEND = 256;
-    DISTRIBUTE_BUFFER_ACK = 512;
+    REQUEST_STATE = 16;
+    RESOLVED_STATE = 32;
+    DISTRIBUTE_PROMPT = 64;
+    DISTRIBUTE_BUFFER_BEGIN = 128;
+    DISTRIBUTE_BUFFER_NEXT = 256;
+    DISTRIBUTE_BUFFER_RESEND = 512;
+    DISTRIBUTE_BUFFER_ACK = 1024;
 }
 
 message ClusterMessageHeader {
@@ -43,6 +45,17 @@ message ClusterAck {
 message ClusterSignalHotReload {
     ClusterMessageHeader header = 1;
     string timestamp = 2;
+}
+
+message ClusterRequestState {
+    ClusterMessageHeader header = 1;
+    ClusterState state = 2;
+}
+
+message ClusterResolvedState {
+    ClusterMessageHeader header = 1;
+    int32 request_message_id = 2;
+    ClusterState state = 3;
 }
 
 message ClusterFenceRequest {

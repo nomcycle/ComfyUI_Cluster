@@ -4,6 +4,8 @@ from .protobuf.messages_pb2 import (
     ClusterMessageHeader,
     ClusterAck,
     ClusterSignalHotReload,
+    ClusterRequestState,
+    ClusterResolvedState,
     ClusterFenceRequest,
     ClusterFenceResponse,
     ClusterAnnounceInstance,
@@ -88,6 +90,17 @@ class IncomingMessage:
             distribute_prompt = ParseDict(self.message, ClusterDistributePrompt())
             return (f"\nClusterDistributePrompt:\n"
                    f"\tprompt={distribute_prompt.prompt},\n"
+                   f"{header}")
+        elif self.msg_type == ClusterMessageType.REQUEST_STATE:
+            request_state = ParseDict(self.message, ClusterRequestState())
+            return (f"\nClusterRequestState:\n"
+                   f"\tstate={request_state.state},\n"
+                   f"{header}")
+        elif self.msg_type == ClusterMessageType.RESOLVED_STATE:
+            resolve_state = ParseDict(self.message, ClusterResolvedState())
+            return (f"\nClusterResolveState:\n"
+                   f"\tstate={resolve_state.state},\n"
+                   f"\trequest_message_id={resolve_state.request_message_id},\n"
                    f"{header}")
         elif self.msg_type == ClusterMessageType.DISTRIBUTE_BUFFER_BEGIN:
             buffer_begin = ParseDict(self.message, ClusterDistributeBufferBegin())
