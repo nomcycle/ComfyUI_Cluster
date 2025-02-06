@@ -7,9 +7,10 @@ import json
 import socket
 from typing import Dict
 import threading
+from enum import Enum, auto
 
 from google.protobuf.json_format import ParseDict
-from .protobuf.messages_pb2 import (ClusterMessageType, ClusterAck, ClusterRequestState, ClusterResolvedState, ClusterState)
+from .protobuf.messages_pb2 import (ClusterMessageType, ClusterAck, ClusterRequestState, ClusterResolvedState, ClusterState, ClusterAwaitingFence)
 
 from .log import logger
 from .env_vars import EnvVars
@@ -31,8 +32,13 @@ class UDPMessageHandler(UDPBase):
         self._pending_acks: Dict[int, PendingMessage] = {}
         self._state_loop = state_loop
         self._local_ips: [str] = None
+
         self._awaiting_state_resolves: Dict[int, set[int]] = {}
-        self._awaiting_state_resolve_futures: Dict[str, asyncio.Future] = {}
+        self._awaiting_state_resolve_futures: Dict[int, asyncio.Future] = {}
+
+        self._instance_fence_states: Dict[int, Dict[int, bool]] = {}
+        self._instance_fence_futures: Dict[int, asyncio.Future] = {}
+        self._queued_instance_fence_signals: Dict[int, queue.Queue[IncomingMessage]] = {}
 
         self._outgoing_thread_lock = threading.Lock()
 
@@ -41,6 +47,7 @@ class UDPMessageHandler(UDPBase):
 
     def _handle_incoming_packet(self, incoming_packet: IncomingPacket):
         try:
+            self._process_pending_fence_signals()
             if incoming_packet.get_is_buffer():
                 return
             incoming_msg: IncomingMessage = self._validate_incoming_message(incoming_packet)
@@ -71,7 +78,7 @@ class UDPMessageHandler(UDPBase):
                 self._complete_future(pending.future, False, "Cancelled")
             del self._pending_acks[message_id]
 
-    def _process_pending_messages(self):
+    def _process_outgoing_message_acks(self):
         current_time = time.time()
         with self._outgoing_thread_lock:
             for message_id, pending in list(self._pending_acks.items()):
@@ -89,6 +96,21 @@ class UDPMessageHandler(UDPBase):
                             retry_count = pending.increment_retry(instance_id)
                             logger.info("Reattempting to send msg: %s to instance: %s (%s/%s)", message_id, instance_id, retry_count, pending.MAX_RETRIES)
                             self._queue_outgoing_to_instance(pending.message, pending_ack.instance_id)
+
+    def _process_pending_fence_signals(self):
+        # Process any queued fence signals for active fence states
+        for fence_id in list(self._instance_fence_states.keys()):
+            queued_signals = self._queued_instance_fence_signals.get(fence_id)
+            if queued_signals:
+                while True:
+                    try:
+                        incoming_msg = queued_signals.get_nowait()
+                        self._handle_await_Fence(incoming_msg)
+                    except queue.Empty:
+                        break
+
+    def _process_pending_messages(self):
+        self._process_outgoing_message_acks()
 
     def _send_message(self, queued_msg: OutgoingPacket):
         if queued_msg.optional_addr is not None:
@@ -160,6 +182,8 @@ class UDPMessageHandler(UDPBase):
         else:
             if incoming_msg.msg_type == ClusterMessageType.RESOLVED_STATE:
                 self._handle_resolved_state(incoming_msg)
+            elif incoming_msg.msg_type == ClusterMessageType.AWAITING_FENCE:
+                self._handle_await_Fence(incoming_msg)
             else: self._handle_non_ack_message(incoming_msg)
 
             if incoming_msg.require_ack:
@@ -286,6 +310,50 @@ class UDPMessageHandler(UDPBase):
             ).add_done_callback(done_callback)
         except Exception as e:
             logger.exception('Encountered exception while attempting to execute coroutine on another asyncio loop:\n%s', e)
+
+        return await future
+
+    def _handle_await_Fence(self, incoming_msg: IncomingMessage):
+        await_fence = ParseDict(incoming_msg.message, ClusterAwaitingFence())
+        if await_fence.fence_id in self._instance_fence_states:
+            if incoming_msg.sender_instance_id in self._instance_fence_states[await_fence.fence_id]:
+                self._instance_fence_states[await_fence.fence_id][incoming_msg.sender_instance_id] = True
+                if all(self._instance_fence_states[await_fence.fence_id].values()):
+                    self._complete_future(self._instance_fence_futures[await_fence.fence_id], True, None)
+                    del self._instance_fence_states[await_fence.fence_id]
+            else:
+                logger.debug(f"Instance {incoming_msg.sender_instance_id} not found in fence states for fence {await_fence.fence_id}")
+        else:
+            if await_fence.fence_id not in self._queued_instance_fence_signals:
+                self._queued_instance_fence_signals[await_fence.fence_id] = queue.Queue()
+            self._queued_instance_fence_signals[await_fence.fence_id].put_nowait(incoming_msg)
+            # logger.debug(f"No fence states found for fence {await_fence.fence_id}")
+
+    async def await_fence_thread_safe(self, fence_id: int):
+        return await self._execute_coroutine_thread_safe(self.await_fence(fence_id))
+
+    async def await_fence(self, fence_id: int):
+        if fence_id in self._instance_fence_states:
+            msg = f"Previous fence with id {fence_id} has not resolved"
+            logger.error(msg)
+            return ACKResult(False, msg)
+
+        future = self._state_loop.create_future()
+        message = ClusterAwaitingFence()
+        message.header.type = ClusterMessageType.AWAITING_FENCE
+        message.header.require_ack = True
+        message.fence_id = fence_id
+
+        self._instance_fence_states[fence_id] = {}
+        for instance_id in range(EnvVars.get_instance_count()):
+            if instance_id == EnvVars.get_instance_index():
+                continue
+            self._instance_fence_states[fence_id][instance_id] = False
+            self._instance_fence_futures[fence_id] = future
+
+        result = await self.send_and_wait(message)
+        if not result.success:
+            return result
 
         return await future
 

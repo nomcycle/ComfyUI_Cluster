@@ -5,17 +5,13 @@ from .protobuf.messages_pb2 import (
     ClusterAck,
     ClusterSignalHotReload,
     ClusterRequestState,
+    ClusterAwaitingFence,
     ClusterResolvedState,
-    ClusterFenceRequest,
-    ClusterFenceResponse,
     ClusterAnnounceInstance,
     ClusterDistributePrompt,
-    ClusterBufferType,
     ClusterDistributeBufferBegin,
     ClusterDistributeBufferAck,
     ClusterDistributeBufferResend,
-    ClusterSignalIdle,
-    ClusterRole
 )
 
 class IncomingPacket:
@@ -90,6 +86,11 @@ class IncomingMessage:
             distribute_prompt = ParseDict(self.message, ClusterDistributePrompt())
             return (f"\nClusterDistributePrompt:\n"
                    f"\tprompt={distribute_prompt.prompt},\n"
+                   f"{header}")
+        elif self.msg_type == ClusterMessageType.AWAITING_FENCE:
+            distribute_prompt = ParseDict(self.message, ClusterAwaitingFence())
+            return (f"\nClusterAwaitingFence:\n"
+                   f"\tfence_id={distribute_prompt.fence_id},\n"
                    f"{header}")
         elif self.msg_type == ClusterMessageType.REQUEST_STATE:
             request_state = ParseDict(self.message, ClusterRequestState())

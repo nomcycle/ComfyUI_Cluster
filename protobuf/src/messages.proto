@@ -21,13 +21,14 @@ enum ClusterMessageType {
     SIGNAL_HOT_RELOAD = 2;
     ANNOUNCE = 4;
     SIGNAL_IDLE = 8;
-    REQUEST_STATE = 16;
-    RESOLVED_STATE = 32;
-    DISTRIBUTE_PROMPT = 64;
-    DISTRIBUTE_BUFFER_BEGIN = 128;
-    DISTRIBUTE_BUFFER_NEXT = 256;
-    DISTRIBUTE_BUFFER_RESEND = 512;
-    DISTRIBUTE_BUFFER_ACK = 1024;
+    AWAITING_FENCE = 16;
+    REQUEST_STATE = 32;
+    RESOLVED_STATE = 64;
+    DISTRIBUTE_PROMPT = 128;
+    DISTRIBUTE_BUFFER_BEGIN = 256;
+    DISTRIBUTE_BUFFER_NEXT = 512;
+    DISTRIBUTE_BUFFER_RESEND = 1024;
+    DISTRIBUTE_BUFFER_ACK = 2048;
 }
 
 message ClusterMessageHeader {
@@ -56,16 +57,6 @@ message ClusterResolvedState {
     ClusterMessageHeader header = 1;
     int32 request_message_id = 2;
     ClusterState state = 3;
-}
-
-message ClusterFenceRequest {
-    ClusterMessageHeader header = 1;
-    int32 node_id = 2;
-}
-
-message ClusterFenceResponse {
-    ClusterMessageHeader header = 1;
-    int32 node_id = 2;
 }
 
 message ClusterAnnounceInstance {
@@ -110,4 +101,9 @@ message ClusterDistributeBufferResend {
 
 message ClusterSignalIdle {
     ClusterMessageHeader header = 1;
+}
+
+message ClusterAwaitingFence {
+    ClusterMessageHeader header = 1;
+    int32 fence_id = 2;
 }

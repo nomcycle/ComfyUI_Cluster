@@ -47,8 +47,8 @@ class ThisInstance(Instance):
         self._msg_queue = queue.Queue()
         self._instance_loop = instance_loop
         self._on_host_reload = on_hot_reload
-        self._pending_state_request_msg: IncomingMessage | None = None
-        self._queued_state_request_msgs: queue.Queue[IncomingMessage] = queue.Queue()
+        # self._pending_state_request_msg: IncomingMessage | None = None
+        # self._queued_state_request_msgs: queue.Queue[IncomingMessage] = queue.Queue()
 
         if EnvVars.get_hot_reload():
             from .states.signal_hot_reload_state import SignalHotReloadStateHandler
@@ -79,31 +79,50 @@ class ThisInstance(Instance):
         message.prompt = json.dumps(prompt_json)
         await self.cluster.udp_message_handler.send_and_wait_thread_safe(message)
 
+    async def change_cluster_state(self, state: ClusterState):
+        result = await self.cluster.udp_message_handler.request_state_thread_safe(state)
+        if not result.success:
+            return
+
     async def fanin_tensor(self, tensor):
         from .states.executing_state import ExecutingStateHandler
-        if self.role == ClusterRole.LEADER:
-            self._current_state = ClusterState.EXECUTING
-            self._current_state_handler = ExecutingStateHandler(self)
+        # if self.role == ClusterRole.LEADER:
 
-        while self._current_state != ClusterState.EXECUTING:
-            logger.info("Instance is in state: %s, waiting for execution...", self._current_state)
-            await asyncio.sleep(0.5)
-        executing_state_handler: ExecutingStateHandler = self._current_state_handler
+        # while self._current_state != ClusterState.EXECUTING:
+        #     logger.info("Instance is in state: %s, waiting for execution...", self._current_state)
+        #     await asyncio.sleep(0.5)
+        executing_state_handler: ExecutingStateHandler = ExecutingStateHandler(self)
+        self._current_state_handler = executing_state_handler
+        self._current_state = ClusterState.EXECUTING
         return await executing_state_handler.distribute_tensor(tensor)
 
-    async def poll_state_requests(self):
-        try:
-            if not self._pending_state_request_msg:
-                self._pending_state_request_msg = self._queued_state_request_msgs.get_nowait()
+    # async def poll_state_requests(self):
+    #     try:
+    #         if not self._pending_state_request_msg:
+    #             self._pending_state_request_msg = self._queued_state_request_msgs.get_nowait()
 
-            if self._pending_state_request_msg:
-                state_request = ParseDict(self._pending_state_request_msg.message, ClusterRequestState())
-                if state_request.state == self._current_state:
-                    await self.cluster.udp_message_handler.resolve_state_thread_safe(state_request, self._pending_state_request_msg.message_id, self._pending_state_request_msg.sender_instance_id)
-                    self._pending_state_request_msg = None
+    #         if self._pending_state_request_msg:
+    #             state_request = ParseDict(self._pending_state_request_msg.message, ClusterRequestState())
+    #             if state_request.state == self._current_state:
+    #                 await self.cluster.udp_message_handler.resolve_state_thread_safe(state_request, self._pending_state_request_msg.message_id, self._pending_state_request_msg.sender_instance_id)
+    #                 self._pending_state_request_msg = None
 
-        except queue.Empty:
-            return
+    #     except queue.Empty:
+    #         return
+
+    async def _change_state(self, incoming_msg: IncomingMessage):
+        state_request = ParseDict(incoming_msg.message, ClusterRequestState())
+        if state_request.state == ClusterState.IDLE:
+            from .states.idle_state import IdleStateHandler
+            self._current_state = state_request.state
+            self._current_state_handler = IdleStateHandler(self)
+        elif state_request.state == ClusterState.EXECUTING:
+            from .states.executing_state import ExecutingStateHandler
+            self._current_state = state_request.state
+            self._current_state_handler = ExecutingStateHandler(self)
+        result = await self.cluster.udp_message_handler.resolve_state_thread_safe(state_request, incoming_msg.message_id, incoming_msg.sender_instance_id)
+        if not result.success:
+            return result
 
     def handle_state_result(self, state_result: StateResult):
         # logger.info('Tick handle_state_result')
@@ -116,26 +135,28 @@ class ThisInstance(Instance):
     async def handle_state(self):
         if not self._current_state_handler.check_current_state(self._current_state):
             return
-        await self.poll_state_requests()
+        # await self.poll_state_requests()
         state_result: StateResult = await self._current_state_handler.handle_state(self._current_state)
         self.handle_state_result(state_result)
 
     async def handle_buffer(self, incoming_buffer: IncomingBuffer):
         if not self._current_state_handler.check_current_state(self._current_state):
             return
-        await self.poll_state_requests()
+        # await self.poll_state_requests()
         state_result = await self._current_state_handler.handle_buffer(self._current_state, incoming_buffer)
         self.handle_state_result(state_result)
 
 
     async def handle_message(self, incoming_message: IncomingMessage):
         if incoming_message.msg_type == ClusterMessageType.REQUEST_STATE:
-            self._queued_state_request_msgs.put_nowait(incoming_message)
+            await self._change_state(incoming_message)
+            return
+            # self._queued_state_request_msgs.put_nowait(incoming_message)
 
         if not self._current_state_handler.check_message_type(incoming_message.msg_type):
             return
 
-        await self.poll_state_requests()
+        # await self.poll_state_requests()
         state_result = await self._current_state_handler.handle_message(self._current_state, incoming_message)
         self.handle_state_result(state_result)
 

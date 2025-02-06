@@ -366,7 +366,11 @@ class ExecutingStateHandler(StateHandler):
             chunk_count=chunk_count
         )
 
-        result = await self._instance.cluster.udp_message_handler.request_state_thread_safe(ClusterState.EXECUTING)
+        # result = await self._instance.cluster.udp_message_handler.request_state_thread_safe(ClusterState.EXECUTING)
+        # if not result.success:
+        #     return
+
+        result = await self._instance.cluster.udp_message_handler.await_fence_thread_safe(69)
         if not result.success:
             return
 
@@ -382,6 +386,7 @@ class ExecutingStateHandler(StateHandler):
             if self._this_instance_state == ThisInstanceState.ALL_DEPENDENCIES_RESOLVED:
                 logger.info("Buffer distribution complete")
                 instance_count = EnvVars.get_instance_count()
+
                 buffers = []
                 for i in range(instance_count):
                     if i == EnvVars.get_instance_index():
@@ -422,4 +427,9 @@ class ExecutingStateHandler(StateHandler):
         logger.info("Tensor distribution complete. Final shape: %s", batch_tensor.shape)
 
         self._this_instance_state = ThisInstanceState.DONE
+
+        result = await self._instance.cluster.udp_message_handler.request_state_thread_safe(ClusterState.IDLE)
+        if not result.success:
+            return
+
         return batch_tensor
