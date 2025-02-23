@@ -16,7 +16,6 @@ from .state_result import StateResult
 from ..instance import ThisInstance
 from execution import validate_prompt
 from ..env_vars import EnvVars
-from .executing_state import ExecutingStateHandler
 from ..queued import IncomingMessage
 
 class IdleStateHandler(StateHandler):

@@ -84,17 +84,26 @@ class ThisInstance(Instance):
         if not result.success:
             return
 
-    async def fanin_tensor(self, tensor):
-        from .states.executing_state import ExecutingStateHandler
-        # if self.role == ClusterRole.LEADER:
-
-        # while self._current_state != ClusterState.EXECUTING:
-        #     logger.info("Instance is in state: %s, waiting for execution...", self._current_state)
-        #     await asyncio.sleep(0.5)
-        executing_state_handler: ExecutingStateHandler = ExecutingStateHandler(self)
-        self._current_state_handler = executing_state_handler
+    async def fanout_tensor(self, tensor):
+        from .states.sync_state import SyncStateHandler
+        sync_state_handler: SyncStateHandler = SyncStateHandler(self)
+        self._current_state_handler = sync_state_handler
         self._current_state = ClusterState.EXECUTING
-        return await executing_state_handler.distribute_tensor(tensor)
+        await sync_state_handler.fanout_tensor(tensor)
+
+    async def receive_tensor(self, tensor):
+        from .states.sync_state import SyncStateHandler
+        sync_state_handler: SyncStateHandler = SyncStateHandler(self)
+        self._current_state_handler = sync_state_handler
+        self._current_state = ClusterState.EXECUTING
+        return await sync_state_handler.receive_tensor(tensor)
+
+    async def fanin_tensor(self, tensor):
+        from .states.sync_state import SyncStateHandler
+        sync_state_handler: SyncStateHandler = SyncStateHandler(self)
+        self._current_state_handler = sync_state_handler
+        self._current_state = ClusterState.EXECUTING
+        return await sync_state_handler.sync_tensors(tensor)
 
     # async def poll_state_requests(self):
     #     try:
@@ -117,9 +126,9 @@ class ThisInstance(Instance):
             self._current_state = state_request.state
             self._current_state_handler = IdleStateHandler(self)
         elif state_request.state == ClusterState.EXECUTING:
-            from .states.executing_state import ExecutingStateHandler
+            from .states.sync_handlers import SyncStateHandler
             self._current_state = state_request.state
-            self._current_state_handler = ExecutingStateHandler(self)
+            self._current_state_handler = SyncStateHandler(self)
         result = await self.cluster.udp_message_handler.resolve_state_thread_safe(state_request, incoming_msg.message_id, incoming_msg.sender_instance_id)
         if not result.success:
             return result
