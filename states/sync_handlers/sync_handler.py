@@ -1,3 +1,5 @@
+import asyncio
+
 from abc import abstractmethod
 from ...queued import IncomingMessage, IncomingBuffer
 from ..state_result import StateResult
@@ -10,9 +12,13 @@ class SyncHandler:
     HEADER_SIZE = 12  # 4 bytes each for buffer flag, instance_id and chunk id
     UDP_MTU = 1460
 
-    def __init__(self, udp_message_handler: UDPMessageHandler, udp_buffer_handler: UDPBufferHandler):
+    def __init__(self,
+        udp_message_handler: UDPMessageHandler,
+        udp_buffer_handler: UDPBufferHandler,
+        asyncio_loop: asyncio.AbstractEventLoop):
         self._udp_message_handler = udp_message_handler
         self._udp_buffer_handler = udp_buffer_handler
+        self._async_loop = asyncio_loop
     
     @abstractmethod
     async def begin(self):

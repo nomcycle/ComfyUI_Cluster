@@ -30,13 +30,17 @@ class CompletedBufferEvent:
     def __init__(self, buffer: bytes):
         self._buffer: bytes = buffer
 
+    def get_buffer(self) -> bytes:
+        return self._buffer
+
 class Receiver(SyncHandler):
     def __init__(self,
         udp_message_handler: UDPMessageHandler,
         udp_buffer_handler: UDPBufferHandler,
+        asyncio_loop: asyncio.AbstractEventLoop,
         completed_buffer: asyncio.Future):
 
-        super().__init__(udp_message_handler, udp_buffer_handler)
+        super().__init__(udp_message_handler, udp_buffer_handler, asyncio_loop)
 
         self._thread_lock = threading.Lock()
         self._completed_buffer_event: asyncio.Future = completed_buffer
@@ -47,6 +51,7 @@ class Receiver(SyncHandler):
         self._expected_chunk_ids: List[int] = []
         self._expected_buffer_type: int = -1
         self._sender_instance_id: int = -1
+        self._received_begin_buffer_msg: bool = False
 
     async def begin(self):
         pass
@@ -61,6 +66,7 @@ class Receiver(SyncHandler):
                 self._expected_chunk_ids = list(range(distribute_buffer.chunk_count))
                 self._dependency_chunks = {}
                 self._chunks_bitfield = np.zeros(distribute_buffer.chunk_count, dtype=np.bool_)
+                self._received_begin_buffer_msg = True
 
     def _buffer_progress(self):
         if len(self._chunks_bitfield) == 0:
@@ -70,6 +76,9 @@ class Receiver(SyncHandler):
         return total_chunks, expected_total
 
     async def tick(self):
+        if not self._received_begin_buffer_msg:
+            return
+
         with self._thread_lock:
             current_time = time.time()
             incoming_queue_size = self._udp_buffer_handler.get_incoming_buffer_queue_size()
@@ -105,11 +114,9 @@ class Receiver(SyncHandler):
                     await self._udp_message_handler.send_and_wait(message, self._sender_instance_id)
 
                     logger.info(f"All chunks received from instance {self._sender_instance_id}, joining buffers")
-                    chunks = self._instance_data.get_dependency_chunks(self._sender_instance_id)
-                    joined_buffer = b''.join(chunks.values())
+                    joined_buffer = b''.join(self._dependency_chunks.values())
 
-                    loop = asyncio.get_event_loop()
-                    loop.call_soon_threadsafe(self._completed_buffer_event.set_result, CompletedBufferEvent(joined_buffer))
+                    self._async_loop.call_soon_threadsafe(self._completed_buffer_event.set_result, CompletedBufferEvent(joined_buffer))
 
     async def handle_buffer(self, current_state: int, incoming_buffer: IncomingBuffer) -> StateResult | None:
         with self._thread_lock:

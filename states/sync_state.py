@@ -86,6 +86,7 @@ class SyncStateHandler(StateHandler):
         emitter: Emitter = Emitter(
             self._instance.cluster.udp_message_handler,
             self._instance.cluster.udp_buffer_handler,
+            asyncio.get_running_loop(),
             all_instanced_received_buffer,
             byte_buffer)
 
@@ -103,6 +104,7 @@ class SyncStateHandler(StateHandler):
         emitter: Emitter = Emitter(
             self._instance.cluster.udp_message_handler,
             self._instance.cluster.udp_buffer_handler,
+            asyncio.get_running_loop(),
             all_instanced_received_buffer,
             byte_buffer)
 
@@ -116,6 +118,7 @@ class SyncStateHandler(StateHandler):
             receivers[instance_index] = Receiver(
                 self._instance.cluster.udp_message_handler,
                 self._instance.cluster.udp_buffer_handler,
+                asyncio.get_running_loop(),
                 on_instance_received_buffer[instance_index])
 
         for current_emitter_instance_id in range(EnvVars.get_instance_count()):
@@ -128,6 +131,9 @@ class SyncStateHandler(StateHandler):
                 await emitter.begin()
                 await all_instanced_received_buffer
 
+                self._message_handler_callback = None
+                self._state_handler_callback = None
+
             else: # If we are currently receiving.
 
                 self._message_handler_callback = receivers[current_emitter_instance_id].handle_message
@@ -135,10 +141,15 @@ class SyncStateHandler(StateHandler):
                 self._state_handler_callback = receivers[current_emitter_instance_id].tick
 
                 await self._fence_instances()
-                buffer = await on_instance_received_buffer[current_emitter_instance_id]
-                if not buffer or len(buffer) == 0:
+                result = await on_instance_received_buffer[current_emitter_instance_id]
+                buffer = result.get_buffer()
+                if len(buffer) == 0:
                     raise Exception(f"Failed to receive buffer from instance {current_emitter_instance_id}")
                 received_buffers[current_emitter_instance_id] = buffer
+
+                self._message_handler_callback = None
+                self._buffer_handler_callback = None
+                self._state_handler_callback = None
 
         return received_buffers
 
@@ -166,10 +177,6 @@ class SyncStateHandler(StateHandler):
         
         # Reconstruct tensor from received buffers
         instance_count = EnvVars.get_instance_count()
-        instance_index = EnvVars.get_instance_index()
-        
-        # Insert tensor bytes at instance index
-        buffers[instance_index] = byte_buffer
         
         combined_buffer = b''.join(buffers)
         array = np.frombuffer(combined_buffer, dtype=np.float32)

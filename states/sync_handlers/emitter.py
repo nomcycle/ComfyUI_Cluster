@@ -31,10 +31,12 @@ class Emitter(SyncHandler):
     def __init__(self,
         udp_message_handler: UDPMessageHandler,
         udp_buffer_handler: UDPBufferHandler,
+        asyncio_loop: asyncio.AbstractEventLoop,
         all_instances_received_buffer: asyncio.Future,
         buffer: bytes):
 
-        super().__init__(udp_message_handler, udp_buffer_handler)
+        super().__init__(udp_message_handler, udp_buffer_handler, asyncio_loop)
+
         self._thread_lock = threading.Lock()
         self._all_instances_received_buffer: asyncio.Future = all_instances_received_buffer
 
@@ -44,7 +46,11 @@ class Emitter(SyncHandler):
         self._sent_begin_buffer: bool = False
 
         # Track state and chunks for each instance
-        self._instance_states: Dict[int, OtherInstanceState] = {}
+        self._instance_states: Dict[int, OtherInstanceState] = {
+            i: OtherInstanceState.AWAITING_CHUNKS
+            for i in range(EnvVars.get_instance_count())
+            if i != EnvVars.get_instance_index()
+        }
         self._instance_chunk_bitfields: Dict[int, np.ndarray] = {}
         self._expected_chunk_ids: Dict[int, list] = {}
         self._received_acks: set = set()
@@ -88,6 +94,17 @@ class Emitter(SyncHandler):
                 self._received_acks.add(ack_msg.instance_index)
                 self._instance_states[ack_msg.instance_index] = OtherInstanceState.COMPLETE_BUFFER
                 self._instance_chunk_bitfields[ack_msg.instance_index] = np.ones(len(self._instance_chunk_bitfields.get(ack_msg.instance_index, [])), dtype=np.bool_)
+
+                # Check if all instances have completed receiving the buffer
+                all_complete = True
+                for instance_id in range(EnvVars.get_instance_count()):
+                    if instance_id != EnvVars.get_instance_index() and self._instance_states[instance_id] != OtherInstanceState.COMPLETE_BUFFER:
+                        all_complete = False
+                        break
+                
+                if all_complete:
+                    logger.debug("All instances have completed receiving the buffer")
+                    self._async_loop.call_soon_threadsafe(self._all_instances_received_buffer.set_result, None)
 
     def _create_chunks(self, byte_buffer):
         chunk_size = SyncHandler.UDP_MTU - SyncHandler.HEADER_SIZE
@@ -160,9 +177,6 @@ class Emitter(SyncHandler):
                 chunk_id_bytes = int(chunk_id).to_bytes(4, byteorder='big')
                 chunk_data = self._this_instance_dependency_chunks[chunk_id]
                 self._emit_byte_chunk(buffer_flag, instance_id_bytes, chunk_id_bytes, chunk_data)
-        
-        else:
-            asyncio.get_running_loop().call_soon_threadsafe(self._all_instances_received_buffer.set_result, None)
 
     def _emit_byte_chunk(self, buffer_flag: bytes, sender_instance_id_bytes: bytes, chunk_id_bytes: bytes, chunk_data: bytes, to_instance_id: int | None = None):
         chunk_with_id = buffer_flag + sender_instance_id_bytes + chunk_id_bytes + chunk_data
