@@ -31,23 +31,28 @@ class SyncStateHandler(StateHandler):
         self._chunk_lock = threading.Lock()
         self._received_acks = set()  # Track which instances have ACKed
         self._recieved_buffer_begin: Dict[int, bool] = {}  # instance_index -> received begin flag
+
         self._message_handler_callback: Callable[[int, IncomingMessage], StateResult | None] = None
         self._buffer_handler_callback: Callable[[int, IncomingBuffer], StateResult | None] = None
         self._state_handler_callback: Callable[[], None] = None
 
         self._sync_handler: SyncHandler | None = None
-        
+        self._exit_state: bool = False
+
         super().__init__(instance,
                          ClusterState.EXECUTING,
                          ClusterMessageType.DISTRIBUTE_BUFFER_BEGIN         |
                          ClusterMessageType.DISTRIBUTE_BUFFER_RESEND        |
                          ClusterMessageType.DISTRIBUTE_BUFFER_ACK)
+
         logger.debug("Initialized ExecutingStateHandler")
 
     async def handle_state(self, current_state: int) -> StateResult | None:
-        if self._state_handler_callback is None or not callable(self._state_handler_callback):
-            return None
-        await self._state_handler_callback()
+        if self._state_handler_callback and callable(self._state_handler_callback):
+            await self._state_handler_callback()
+        if self._exit_state:
+            from .idle_state import IdleStateHandler
+            return StateResult(current_state, self, ClusterState.IDLE, IdleStateHandler(self._instance))
         return None
 
     async def handle_message(self, current_state: int, incoming_message: IncomingMessage) -> StateResult | None:
@@ -65,20 +70,31 @@ class SyncStateHandler(StateHandler):
         if not result.success:
             raise Exception("Failed to fence instances")
 
+    def _clear_delegates(self):
+        self._message_handler_callback = None
+        self._buffer_handler_callback = None
+        self._state_handler_callback = None
+    
+    def _register_delegates(self, handle_message_callback, handle_buffer_callback, tick_callback):
+        self._message_handler_callback = handle_message_callback
+        self._buffer_handler_callback = handle_buffer_callback
+        self._state_handler_callback = tick_callback
+
     async def _receive_buffer(self) -> list[bytes]:
         completed_buffer: asyncio.Future = asyncio.get_running_loop().create_future()
         receiver: Receiver = Receiver(
             self._instance.cluster.udp_message_handler,
             self._instance.cluster.udp_buffer_handler,
+            asyncio.get_running_loop(),
             completed_buffer)
 
-        self._message_handler_callback = receiver.handle_message
-        self._buffer_handler_callback = receiver.handle_buffer
-        self._state_handler_callback = receiver.tick
+        self._register_delegates(receiver.handle_message, receiver.handle_buffer, receiver.tick)
 
         await self._fence_instances()
-
         result = await completed_buffer
+
+        self._clear_delegates()
+
         return result.buffer
 
     async def _fanout_buffer(self, byte_buffer: bytes):
@@ -90,12 +106,13 @@ class SyncStateHandler(StateHandler):
             all_instanced_received_buffer,
             byte_buffer)
 
-        self._message_handler_callback = emitter.handle_message
-        self._state_handler_callback = emitter.tick
+        self._register_delegates(emitter.handle_message, None, emitter.tick)
 
         await self._fence_instances()
         await emitter.begin()
         await all_instanced_received_buffer
+
+        self._clear_delegates()
 
     async def _sync_buffers(self, byte_buffer: bytes) -> list[bytes]:
 
@@ -124,21 +141,20 @@ class SyncStateHandler(StateHandler):
         for current_emitter_instance_id in range(EnvVars.get_instance_count()):
 
             if current_emitter_instance_id == EnvVars.get_instance_index():
-                self._message_handler_callback = emitter.handle_message
-                self._state_handler_callback = emitter.tick
+                self._register_delegates(emitter.handle_message, None, emitter.tick)
 
                 await self._fence_instances()
                 await emitter.begin()
                 await all_instanced_received_buffer
 
-                self._message_handler_callback = None
-                self._state_handler_callback = None
+                self._clear_delegates()
 
             else: # If we are currently receiving.
 
-                self._message_handler_callback = receivers[current_emitter_instance_id].handle_message
-                self._buffer_handler_callback = receivers[current_emitter_instance_id].handle_buffer
-                self._state_handler_callback = receivers[current_emitter_instance_id].tick
+                self._register_delegates(
+                    receivers[current_emitter_instance_id].handle_message,
+                    receivers[current_emitter_instance_id].handle_buffer,
+                    receivers[current_emitter_instance_id].tick)
 
                 await self._fence_instances()
                 result = await on_instance_received_buffer[current_emitter_instance_id]
@@ -147,9 +163,7 @@ class SyncStateHandler(StateHandler):
                     raise Exception(f"Failed to receive buffer from instance {current_emitter_instance_id}")
                 received_buffers[current_emitter_instance_id] = buffer
 
-                self._message_handler_callback = None
-                self._buffer_handler_callback = None
-                self._state_handler_callback = None
+                self._clear_delegates()
 
         return received_buffers
 
@@ -189,8 +203,9 @@ class SyncStateHandler(StateHandler):
 
         # self._this_instance_state = ThisInstanceState.DONE
 
-        result = await self._instance.cluster.udp_message_handler.request_state_thread_safe(ClusterState.IDLE)
-        if not result.success:
-            return
+        # result = await self._instance.cluster.udp_message_handler.request_state_thread_safe(ClusterState.IDLE)
+        # if not result.success:
+        #     return
 
+        self._exit_state = True
         return batch_tensor

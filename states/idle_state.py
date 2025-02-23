@@ -16,7 +16,7 @@ from .state_result import StateResult
 from ..instance import ThisInstance
 from execution import validate_prompt
 from ..env_vars import EnvVars
-from ..queued import IncomingMessage
+from ..queued import IncomingBuffer, IncomingMessage
 
 class IdleStateHandler(StateHandler):
     def __init__(self, instance: ThisInstance):
@@ -63,3 +63,6 @@ class IdleStateHandler(StateHandler):
                 return
                 
             logger.info("Received idle signal from leader %s", sender_id)
+
+    async def handle_buffer(self, current_state: int, incoming_buffer: IncomingBuffer):
+        return
