@@ -33,7 +33,8 @@ class Emitter(SyncHandler):
         udp_buffer_handler: UDPBufferHandler,
         asyncio_loop: asyncio.AbstractEventLoop,
         all_instances_received_buffer: asyncio.Future,
-        buffer: bytes):
+        buffer: bytes,
+        to_instance_ids: int | list[int] | None = None):
 
         super().__init__(udp_message_handler, udp_buffer_handler, asyncio_loop)
 
@@ -46,11 +47,18 @@ class Emitter(SyncHandler):
         self._sent_begin_buffer: bool = False
 
         # Track state and chunks for each instance
+        if to_instance_ids is None:
+            to_instance_ids = range(EnvVars.get_instance_count())
+        elif isinstance(to_instance_ids, int):
+            to_instance_ids = [to_instance_ids]
+        self._to_instance_ids = to_instance_ids
+            
         self._instance_states: Dict[int, OtherInstanceState] = {
             i: OtherInstanceState.AWAITING_CHUNKS
-            for i in range(EnvVars.get_instance_count())
+            for i in to_instance_ids
             if i != EnvVars.get_instance_index()
         }
+
         self._instance_chunk_bitfields: Dict[int, np.ndarray] = {}
         self._expected_chunk_ids: Dict[int, list] = {}
         self._received_acks: set = set()
@@ -97,8 +105,8 @@ class Emitter(SyncHandler):
 
                 # Check if all instances have completed receiving the buffer
                 all_complete = True
-                for instance_id in range(EnvVars.get_instance_count()):
-                    if instance_id != EnvVars.get_instance_index() and self._instance_states[instance_id] != OtherInstanceState.COMPLETE_BUFFER:
+                for instance_id in self._to_instance_ids:
+                    if self._instance_states[instance_id] != OtherInstanceState.COMPLETE_BUFFER:
                         all_complete = False
                         break
                 
@@ -129,7 +137,7 @@ class Emitter(SyncHandler):
         self._create_chunks(self._this_instance_dependency_byte_buffer)
 
     def _has_received_all_instance_resend_requests(self) -> bool:
-        for instance_id in range(EnvVars.get_instance_count()):
+        for instance_id in self._to_instance_ids:
             if instance_id == EnvVars.get_instance_index():
                 continue
             if instance_id not in self._instance_states or self._instance_states[instance_id] not in [OtherInstanceState.REQUESTED_RESEND, OtherInstanceState.AWAITING_CHUNKS]:
@@ -144,13 +152,13 @@ class Emitter(SyncHandler):
         if not self._has_received_all_instance_resend_requests():
             return
 
-        for instance_id in range(EnvVars.get_instance_count()):
+        for instance_id in self._to_instance_ids:
             if self._instance_states.get(instance_id) == OtherInstanceState.REQUESTED_RESEND:
                 self._instance_states[instance_id] = OtherInstanceState.AWAITING_CHUNKS
 
         # Get all instances that have acked
         acked_instances = []
-        for i in range(EnvVars.get_instance_count()):
+        for i in self._to_instance_ids:
             if i in self._instance_chunk_bitfields and len(self._instance_chunk_bitfields[i]) > 0:
                 acked_instances.append(i)
                 

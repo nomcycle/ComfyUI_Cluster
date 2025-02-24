@@ -116,7 +116,36 @@ class ClusterExecuteCurrentWorkflow(SyncedNode):
         self._distribute_current_prompt_blocking()
         return (image,)
 
-class ClusterFanOutBase(SyncedNode):
+class ClusterListenTensorBroadcast(SyncedNode):
+    def __init__(self):
+        super().__init__()
+
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+            }
+        }
+
+    RETURN_TYPES = ("IMAGE",) # Set by child classes
+    FUNCTION = "execute"
+    CATEGORY = "Cluster"
+
+    def blocking_sync(self):
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        instance: InstanceLoop = get_instance_loop()
+        return loop.run_until_complete(instance._this_instance.receive_tensor_fanout())
+
+    def execute(self):
+        try:
+            output = self.blocking_sync()
+            return (output,)
+        except Exception as e:
+            logger.error("Error executing fan in tensors: %s\n%s", str(e), traceback.format_exc())
+            raise e
+
+class ClusterBroadcastTensor(SyncedNode):
     def __init__(self):
         super().__init__()
 
@@ -136,7 +165,7 @@ class ClusterFanOutBase(SyncedNode):
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         instance: InstanceLoop = get_instance_loop()
-        loop.run_until_complete(instance._this_instance.fanout_tensor(input))
+        loop.run_until_complete(instance._this_instance.broadcast_tensor(input))
 
     def execute(self, input: torch.Tensor):
         try:
@@ -146,37 +175,7 @@ class ClusterFanOutBase(SyncedNode):
             logger.error("Error executing fan in tensors: %s\n%s", str(e), traceback.format_exc())
             raise e
 
-class ClusterReceive(SyncedNode):
-    def __init__(self):
-        super().__init__()
-
-    @classmethod
-    def INPUT_TYPES(s):
-        return {
-            "required": {
-                "input": ("IMAGE",),
-            }
-        }
-
-    RETURN_TYPES = ("IMAGE",) # Set by child classes
-    FUNCTION = "execute"
-    CATEGORY = "Cluster"
-
-    def blocking_sync(self):
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        instance: InstanceLoop = get_instance_loop()
-        return loop.run_until_complete(instance._this_instance.receive_tensor(input))
-
-    def execute(self):
-        try:
-            output = self.blocking_sync()
-            return (output,)
-        except Exception as e:
-            logger.error("Error executing fan in tensors: %s\n%s", str(e), traceback.format_exc())
-            raise e
-
-class ClusterFanInBase(SyncedNode):
+class ClusterTensorNodeBase(SyncedNode):
     def __init__(self):
         super().__init__()
 
@@ -197,36 +196,49 @@ class ClusterFanInBase(SyncedNode):
     def get_input(self, input) -> torch.Tensor:
         pass
 
-    @abstractmethod 
-    def prepare_output(self, output: torch.Tensor) -> any:
-        pass
-
     def blocking_sync(self, input):
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         instance: InstanceLoop = get_instance_loop()
-        return loop.run_until_complete(instance._this_instance.fanin_tensor(input))
+        return loop.run_until_complete(self._sync_operation(instance, input))
+
+    @abstractmethod
+    def _sync_operation(self, instance, input):
+        pass
 
     def execute(self, input):
         try:
             output = self.blocking_sync(self.get_input(input))
-            return (self.prepare_output(output),)
+            return self._prepare_output(output)
         except Exception as e:
-            logger.error("Error executing fan in tensors: %s\n%s", str(e), traceback.format_exc())
+            logger.error("Error executing tensor operation: %s\n%s", str(e), traceback.format_exc())
             raise e
 
-class ClusterFanInImages(ClusterFanInBase):
+    def _prepare_output(self, output):
+        return (output,)
+
+class ClusterGatherBase(ClusterTensorNodeBase):
+    def _sync_operation(self, instance, input):
+        return instance._this_instance.gather_tensors(input)
+
+class ClusterFanOutBase(ClusterTensorNodeBase):
+    def _sync_operation(self, instance, input):
+        if len(input.shape) != 4 or input.shape[0] != EnvVars.get_instance_count():
+            raise ValueError(f"Image count in batch must match the cluster instance count: {EnvVars.get_instance_count()}")
+        return instance._this_instance.fanout_tensor(input)
+
+    def _prepare_output(self, output):
+        return (self.get_input(output),)
+
+class ClusterImageNodeMixin:
     INPUT_TYPE = "IMAGE"
     RETURN_TYPES = ("IMAGE",)
     
     def get_input(self, input) -> torch.Tensor:
         return input[0]
 
-    def prepare_output(self, output: torch.Tensor):
-        return output
-
-class ClusterFanInLatents(ClusterFanInBase):
-    INPUT_TYPE = "LATENT"
+class ClusterLatentNodeMixin:
+    INPUT_TYPE = "LATENT"  
     RETURN_TYPES = ("LATENT",)
     
     def get_input(self, input) -> torch.Tensor:
@@ -235,18 +247,33 @@ class ClusterFanInLatents(ClusterFanInBase):
             samples = samples.squeeze(0)
         return samples
 
-    def prepare_output(self, output: torch.Tensor):
-        return {'samples': output}
+    def _prepare_output(self, output):
+        return ({'samples': output},)
 
-class ClusterFanInMasks(ClusterFanInBase):
+class ClusterMaskNodeMixin:
     INPUT_TYPE = "MASK"
     RETURN_TYPES = ("MASK",)
     
     def get_input(self, input) -> torch.Tensor:
         return input[0]
 
-    def prepare_output(self, output: torch.Tensor):
-        return output
+class ClusterGatherImages(ClusterImageNodeMixin, ClusterGatherBase):
+    pass
+
+class ClusterGatherLatents(ClusterLatentNodeMixin, ClusterGatherBase):
+    pass
+
+class ClusterGatherMasks(ClusterMaskNodeMixin, ClusterGatherBase):
+    pass
+
+class ClusterFanOutImage(ClusterImageNodeMixin, ClusterFanOutBase):
+    pass
+
+class ClusterFanOutLatent(ClusterLatentNodeMixin, ClusterFanOutBase):
+    pass
+
+class ClusterFanOutMask(ClusterMaskNodeMixin, ClusterFanOutBase):
+    pass
 
 @PromptServer.instance.routes.post("/cluster/queue")
 async def queue(request):
@@ -261,21 +288,31 @@ async def queue(request):
         return web.Response(status=500)
 
 NODE_CLASS_MAPPINGS = {
-    "ClusterFanInImages": ClusterFanInImages,
-    "ClusterFanInLatents": ClusterFanInLatents,
-    "ClusterFanInMasks": ClusterFanInMasks,
     "ClusterInstanceIndex": ClusterInstanceIndex,
     "ClusterExecuteWorkflow": ClusterExecuteWorkflow,
-    "ClusterExecuteCurrentWorkflow": ClusterExecuteCurrentWorkflow
+    "ClusterExecuteCurrentWorkflow": ClusterExecuteCurrentWorkflow,
+    "ClusterGatherImages": ClusterGatherImages,
+    "ClusterGatherLatents": ClusterGatherLatents,
+    "ClusterGatherMasks": ClusterGatherMasks,
+    "ClusterFanOutImage": ClusterFanOutImage,
+    "ClusterFanOutLatent": ClusterFanOutLatent,
+    "ClusterFanOutMask": ClusterFanOutMask,
+    "ClusterBroadcastTensor": ClusterBroadcastTensor,
+    "ClusterListenTensorBroadcast": ClusterListenTensorBroadcast,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "ClusterFanInImages": "Cluster Fan-in images",
-    "ClusterFanInLatents": "Cluster Fan-in latents",
-    "ClusterFanInMasks": "Cluster Fan-in masks",
+    "ClusterGatherImages": "Cluster Gather Images",
+    "ClusterGatherLatents": "Cluster Gather Latents", 
+    "ClusterGatherMasks": "Cluster Gather Masks",
+    "ClusterFanOutImage": "Cluster Fan-out Image",
+    "ClusterFanOutLatent": "Cluster Fan-out Latent",
+    "ClusterFanOutMask": "Cluster Fan-out Mask",
     "ClusterInstanceIndex": "Cluster Instance Index",
     "ClusterExecuteWorkflow": "Cluster Execute Workflow",
-    "ClusterExecuteCurrentWorkflow": "Cluster Execute Current Workflow"
+    "ClusterExecuteCurrentWorkflow": "Cluster Execute Current Workflow",
+    "ClusterBroadcastTensor": "Cluster Broadcast Tensor",
+    "ClusterListenTensorBroadcast": "Cluster Listen Tensor Broadcast"
 }
 
 WEB_DIRECTORY = "./js"

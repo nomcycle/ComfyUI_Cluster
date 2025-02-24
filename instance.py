@@ -84,40 +84,28 @@ class ThisInstance(Instance):
         if not result.success:
             return
 
+    async def _setup_sync_state(self) -> object:
+        from .states.sync_state import SyncStateHandler
+        sync_state_handler = SyncStateHandler(self)
+        self._current_state_handler = sync_state_handler
+        self._current_state = ClusterState.EXECUTING
+        return sync_state_handler
+    
+    async def broadcast_tensor(self, tensor):
+        sync_state_handler = await self._setup_sync_state()
+        await sync_state_handler.begin_tensor_broadcast(tensor)
+
     async def fanout_tensor(self, tensor):
-        from .states.sync_state import SyncStateHandler
-        sync_state_handler: SyncStateHandler = SyncStateHandler(self)
-        self._current_state_handler = sync_state_handler
-        self._current_state = ClusterState.EXECUTING
-        await sync_state_handler.fanout_tensor(tensor)
+        sync_state_handler = await self._setup_sync_state()
+        await sync_state_handler.begin_fanout_emitter(tensor)
 
-    async def receive_tensor(self, tensor):
-        from .states.sync_state import SyncStateHandler
-        sync_state_handler: SyncStateHandler = SyncStateHandler(self)
-        self._current_state_handler = sync_state_handler
-        self._current_state = ClusterState.EXECUTING
-        return await sync_state_handler.receive_tensor(tensor)
+    async def receive_tensor_fanout(self):
+        sync_state_handler = await self._setup_sync_state()
+        return await sync_state_handler.begin_fanout_receiver()
 
-    async def fanin_tensor(self, tensor):
-        from .states.sync_state import SyncStateHandler
-        sync_state_handler: SyncStateHandler = SyncStateHandler(self)
-        self._current_state_handler = sync_state_handler
-        self._current_state = ClusterState.EXECUTING
-        return await sync_state_handler.sync_tensors(tensor)
-
-    # async def poll_state_requests(self):
-    #     try:
-    #         if not self._pending_state_request_msg:
-    #             self._pending_state_request_msg = self._queued_state_request_msgs.get_nowait()
-
-    #         if self._pending_state_request_msg:
-    #             state_request = ParseDict(self._pending_state_request_msg.message, ClusterRequestState())
-    #             if state_request.state == self._current_state:
-    #                 await self.cluster.udp_message_handler.resolve_state_thread_safe(state_request, self._pending_state_request_msg.message_id, self._pending_state_request_msg.sender_instance_id)
-    #                 self._pending_state_request_msg = None
-
-    #     except queue.Empty:
-    #         return
+    async def gather_tensors(self, tensor):
+        sync_state_handler = await self._setup_sync_state()
+        return await sync_state_handler.begin_gathering_tensors(tensor)
 
     async def _change_state(self, incoming_msg: IncomingMessage):
         state_request = ParseDict(incoming_msg.message, ClusterRequestState())

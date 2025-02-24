@@ -80,7 +80,7 @@ class SyncStateHandler(StateHandler):
         self._buffer_handler_callback = handle_buffer_callback
         self._state_handler_callback = tick_callback
 
-    async def _receive_buffer(self) -> list[bytes]:
+    async def _begin_fanout_receiver(self) -> list[bytes]:
         completed_buffer: asyncio.Future = asyncio.get_running_loop().create_future()
         receiver: Receiver = Receiver(
             self._instance.cluster.udp_message_handler,
@@ -97,7 +97,7 @@ class SyncStateHandler(StateHandler):
 
         return result.buffer
 
-    async def _fanout_buffer(self, byte_buffer: bytes):
+    async def _begin_buffer_broadcast(self, byte_buffer: bytes):
         all_instanced_received_buffer: asyncio.Future = asyncio.get_running_loop().create_future()
         emitter: Emitter = Emitter(
             self._instance.cluster.udp_message_handler,
@@ -114,7 +114,32 @@ class SyncStateHandler(StateHandler):
 
         self._clear_delegates()
 
-    async def _sync_buffers(self, byte_buffer: bytes) -> list[bytes]:
+    async def _begin_fanout_emitter(self, tensor: torch.Tensor):
+
+        for instance_id in range(EnvVars.get_instance_count()):
+
+            # Extract single image from batch
+            image_tensor = tensor[instance_id:instance_id+1]
+            byte_buffer = image_tensor.numpy().tobytes()
+
+            all_instanced_received_buffer: asyncio.Future = asyncio.get_running_loop().create_future()
+            emitter: Emitter = Emitter(
+                self._instance.cluster.udp_message_handler,
+                self._instance.cluster.udp_buffer_handler,
+                asyncio.get_running_loop(),
+                all_instanced_received_buffer,
+                byte_buffer,
+                to_instance_ids=instance_id)
+
+            self._register_delegates(emitter.handle_message, None, emitter.tick)
+
+            await self._fence_instances()
+            await emitter.begin()
+            await all_instanced_received_buffer
+
+            self._clear_delegates()
+
+    async def _begin_gather_buffers(self, byte_buffer: bytes) -> list[bytes]:
 
         all_instanced_received_buffer: asyncio.Future = asyncio.get_running_loop().create_future()
 
@@ -167,17 +192,22 @@ class SyncStateHandler(StateHandler):
 
         return received_buffers
 
-    async def fanout_tensor(self, tensor: torch.Tensor):
+    async def begin_buffer_broadcast(self, tensor: torch.Tensor):
 
         logger.info("Distributing tensor of shape %s", tensor.shape)
         byte_buffer = tensor.numpy().tobytes()
 
-        await self._fanout_buffer(byte_buffer)
+        await self._begin_buffer_broadcast(byte_buffer)
 
-    async def receive_tensor(self) -> torch.Tensor:
-        return await self._receive_buffer()
+    async def begin_fanout_emitter(self, tensor: torch.Tensor):
 
-    async def sync_tensors(self, tensor: torch.Tensor) -> torch.Tensor:
+        logger.info("Distributing tensor of shape %s", tensor.shape)
+        await self._begin_fanout_emitter(tensor)
+
+    async def begin_fanout_receiver(self) -> torch.Tensor:
+        buffer = await self._begin_fanout_receiver()
+
+    async def begin_gathering_tensors(self, tensor: torch.Tensor) -> torch.Tensor:
         # TODO: Current implementation assumes all tensors have same shape
         # Should validate shapes match before combining
 
@@ -187,7 +217,7 @@ class SyncStateHandler(StateHandler):
         byte_buffer = tensor.numpy().tobytes()
 
         # This should keep blocking until we get all buffers.
-        buffers = await self._sync_buffers(byte_buffer)
+        buffers = await self._begin_gather_buffers(byte_buffer)
         
         # Reconstruct tensor from received buffers
         instance_count = EnvVars.get_instance_count()

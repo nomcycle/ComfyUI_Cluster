@@ -29,6 +29,7 @@ enum ClusterMessageType {
     DISTRIBUTE_BUFFER_NEXT = 512;
     DISTRIBUTE_BUFFER_RESEND = 1024;
     DISTRIBUTE_BUFFER_ACK = 2048;
+    DISTRIBUTE_BUFFER_DESCRIPTOR = 4096;
 }
 
 message ClusterMessageHeader {
@@ -93,6 +94,12 @@ message ClusterDistributeBufferResend {
     ClusterMessageHeader header = 1;
     int32 instance_index = 2;
     bytes missing_chunk_ids = 3;
+}
+
+message ClusterDistributeBufferDescriptor {
+    ClusterMessageHeader header = 1;
+    int32 buffer_type = 2;
+    repeated int32 buffer_shape = 3;
 }
 
 message ClusterSignalIdle {
