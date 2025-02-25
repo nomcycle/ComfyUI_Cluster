@@ -19,6 +19,11 @@ class SyncHandler:
         self._udp_message_handler = udp_message_handler
         self._udp_buffer_handler = udp_buffer_handler
         self._async_loop = asyncio_loop
+
+    async def _fence_instances(self) -> bool:
+        result = await self._udp_message_handler.await_fence_thread_safe(69)
+        if not result.success:
+            raise Exception("Failed to fence instances")
     
     @abstractmethod
     async def begin(self):

@@ -49,6 +49,7 @@ class IncomingMessage:
                 message_id: int,
                 msg_type: int,
                 require_ack: bool,
+                expected_key: int,
                 message):
         self.sender_addr = sender_addr
         self.sender_instance_id = sender_instance_id
@@ -56,6 +57,7 @@ class IncomingMessage:
         self.message_id = message_id
         self.msg_type = msg_type
         self.require_ack = require_ack
+        self.expected_key = expected_key
         self.message = message
 
     def __str__(self):
@@ -64,7 +66,8 @@ class IncomingMessage:
                  f"\t\tsender_instance_id={self.sender_instance_id},\n"
                  f"\t\tmsg_type={self.msg_type_str},\n"
                  f"\t\tmessage_id={self.message_id},\n"
-                 f"\t\trequire_ack={self.require_ack}")
+                 f"\t\trequire_ack={self.require_ack},\n"
+                 f"\t\texpected_key={self.expected_key}")
 
         if self.msg_type == ClusterMessageType.ACK:
             ack = ParseDict(self.message, ClusterAck())

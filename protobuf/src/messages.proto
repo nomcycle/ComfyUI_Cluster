@@ -36,7 +36,8 @@ message ClusterMessageHeader {
     ClusterMessageType type = 1;
     int32 message_id = 2;
     int32 sender_instance_id = 3;
-    bool require_ack = 5;
+    bool require_ack = 4;
+    int32 expected_key = 5;
 }
 
 message ClusterAck {

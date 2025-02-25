@@ -151,8 +151,9 @@ class UDPSingleton:
             
     
 class ACKResult:
-    def __init__(self, success: bool, error_msg: str | None = None):
+    def __init__(self, success: bool, data: object | None = None, error_msg: str | None = None):
         self.success = success
+        self.data = data
         self.error_msg = error_msg
 
 class UDPBase(ABC):

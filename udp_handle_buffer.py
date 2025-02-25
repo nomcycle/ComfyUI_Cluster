@@ -5,16 +5,11 @@ import time
 import threading
 
 from .log import logger
-from .udp_base import UDPBase
+from .udp_base import UDPBase, ACKResult
 from .udp_base import UDPSingleton
 from .env_vars import EnvVars
 from .queued import IncomingPacket, IncomingBuffer, OutgoingPacket
     
-class ACKResult:
-    def __init__(self, success: bool, error_msg: str = None):
-        self.success = success
-        self.error_msg = error_msg
-
 class UDPBufferHandler(UDPBase):
     def __init__(self, state_loop, incoming_processed_packet_queue: queue.Queue):
         super().__init__(incoming_processed_packet_queue)

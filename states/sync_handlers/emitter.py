@@ -48,9 +48,11 @@ class Emitter(SyncHandler):
 
         # Track state and chunks for each instance
         if to_instance_ids is None:
-            to_instance_ids = range(EnvVars.get_instance_count())
+            to_instance_ids = list(range(EnvVars.get_instance_count()))
         elif isinstance(to_instance_ids, int):
             to_instance_ids = [to_instance_ids]
+        if EnvVars.get_instance_index() in to_instance_ids:
+            to_instance_ids.remove(EnvVars.get_instance_index())
         self._to_instance_ids = to_instance_ids
             
         self._instance_states: Dict[int, OtherInstanceState] = {
@@ -66,6 +68,9 @@ class Emitter(SyncHandler):
         self._prepare_buffers(buffer)
     
     async def begin(self):
+
+        await self._fence_instances()
+
         instance_index = EnvVars.get_instance_index()
         byte_buffer_size = len(self._this_instance_dependency_byte_buffer)
         chunk_count = math.ceil(byte_buffer_size / (SyncHandler.UDP_MTU - SyncHandler.HEADER_SIZE))
@@ -81,7 +86,7 @@ class Emitter(SyncHandler):
             chunk_count=chunk_count
         )
 
-        await self._udp_message_handler.send_and_wait_thread_safe(message)
+        await self._udp_message_handler.send_exepected_message_thread_safe(message, 8)
         self._sent_begin_buffer = True
 
     async def handle_message(self, current_state: int, incoming_message: IncomingMessage) -> StateResult | None:
@@ -138,8 +143,6 @@ class Emitter(SyncHandler):
 
     def _has_received_all_instance_resend_requests(self) -> bool:
         for instance_id in self._to_instance_ids:
-            if instance_id == EnvVars.get_instance_index():
-                continue
             if instance_id not in self._instance_states or self._instance_states[instance_id] not in [OtherInstanceState.REQUESTED_RESEND, OtherInstanceState.AWAITING_CHUNKS]:
                 return False
         return True

@@ -65,11 +65,6 @@ class SyncStateHandler(StateHandler):
             return None
         return await self._buffer_handler_callback(current_state, incoming_buffer)
 
-    async def _fence_instances(self) -> bool:
-        result = await self._instance.cluster.udp_message_handler.await_fence_thread_safe(69)
-        if not result.success:
-            raise Exception("Failed to fence instances")
-
     def _clear_delegates(self):
         self._message_handler_callback = None
         self._buffer_handler_callback = None
@@ -90,7 +85,7 @@ class SyncStateHandler(StateHandler):
 
         self._register_delegates(receiver.handle_message, receiver.handle_buffer, receiver.tick)
 
-        await self._fence_instances()
+        receiver.begin()
         result = await completed_buffer
 
         self._clear_delegates()
@@ -108,7 +103,6 @@ class SyncStateHandler(StateHandler):
 
         self._register_delegates(emitter.handle_message, None, emitter.tick)
 
-        await self._fence_instances()
         await emitter.begin()
         await all_instanced_received_buffer
 
@@ -133,7 +127,6 @@ class SyncStateHandler(StateHandler):
 
             self._register_delegates(emitter.handle_message, None, emitter.tick)
 
-            await self._fence_instances()
             await emitter.begin()
             await all_instanced_received_buffer
 
@@ -168,7 +161,6 @@ class SyncStateHandler(StateHandler):
             if current_emitter_instance_id == EnvVars.get_instance_index():
                 self._register_delegates(emitter.handle_message, None, emitter.tick)
 
-                await self._fence_instances()
                 await emitter.begin()
                 await all_instanced_received_buffer
 
@@ -181,7 +173,7 @@ class SyncStateHandler(StateHandler):
                     receivers[current_emitter_instance_id].handle_buffer,
                     receivers[current_emitter_instance_id].tick)
 
-                await self._fence_instances()
+                await receivers[current_emitter_instance_id].begin()
                 result = await on_instance_received_buffer[current_emitter_instance_id]
                 buffer = result.get_buffer()
                 if len(buffer) == 0:
@@ -192,7 +184,7 @@ class SyncStateHandler(StateHandler):
 
         return received_buffers
 
-    async def begin_buffer_broadcast(self, tensor: torch.Tensor):
+    async def begin_tensor_broadcast(self, tensor: torch.Tensor):
 
         logger.info("Distributing tensor of shape %s", tensor.shape)
         byte_buffer = tensor.numpy().tobytes()
@@ -234,7 +226,7 @@ class SyncStateHandler(StateHandler):
         # self._this_instance_state = ThisInstanceState.DONE
 
         # result = await self._instance.cluster.udp_message_handler.request_state_thread_safe(ClusterState.IDLE)
-        # if not result.success:
+        # if not result.result:
         #     return
 
         self._exit_state = True

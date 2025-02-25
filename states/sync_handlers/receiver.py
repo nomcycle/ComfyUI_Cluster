@@ -54,19 +54,36 @@ class Receiver(SyncHandler):
         self._received_begin_buffer_msg: bool = False
 
     async def begin(self):
-        pass
+
+        await self._fence_instances()
+
+        result = await self._udp_message_handler.await_exepected_message_thread_safe(8)
+        if not result.success or not result.data:
+            raise Exception("Failed to receive buffer begin message")
+        buffer_begin_message = result.data
+
+        with self._thread_lock:
+            distribute_buffer = ParseDict(buffer_begin_message.message, ClusterDistributeBufferBegin())
+            logger.debug(f"Received buffer begin message from instance {distribute_buffer.instance_index}, expecting {distribute_buffer.chunk_count} chunks")
+            self._sender_instance_id = distribute_buffer.instance_index
+            self._expected_buffer_type = distribute_buffer.buffer_type
+            self._expected_chunk_ids = list(range(distribute_buffer.chunk_count))
+            self._dependency_chunks = {}
+            self._chunks_bitfield = np.zeros(distribute_buffer.chunk_count, dtype=np.bool_)
+            self._received_begin_buffer_msg = True
 
     async def handle_message(self, current_state: int, incoming_message: IncomingMessage) -> StateResult | None:
-        with self._thread_lock:
-            if incoming_message.msg_type == ClusterMessageType.DISTRIBUTE_BUFFER_BEGIN:
-                distribute_buffer = ParseDict(incoming_message.message, ClusterDistributeBufferBegin())
-                logger.debug(f"Received buffer begin message from instance {distribute_buffer.instance_index}, expecting {distribute_buffer.chunk_count} chunks")
-                self._sender_instance_id = distribute_buffer.instance_index
-                self._expected_buffer_type = distribute_buffer.buffer_type
-                self._expected_chunk_ids = list(range(distribute_buffer.chunk_count))
-                self._dependency_chunks = {}
-                self._chunks_bitfield = np.zeros(distribute_buffer.chunk_count, dtype=np.bool_)
-                self._received_begin_buffer_msg = True
+        pass
+        # with self._thread_lock:
+        #     if incoming_message.msg_type == ClusterMessageType.DISTRIBUTE_BUFFER_BEGIN:
+        #         distribute_buffer = ParseDict(incoming_message.message, ClusterDistributeBufferBegin())
+        #         logger.debug(f"Received buffer begin message from instance {distribute_buffer.instance_index}, expecting {distribute_buffer.chunk_count} chunks")
+        #         self._sender_instance_id = distribute_buffer.instance_index
+        #         self._expected_buffer_type = distribute_buffer.buffer_type
+        #         self._expected_chunk_ids = list(range(distribute_buffer.chunk_count))
+        #         self._dependency_chunks = {}
+        #         self._chunks_bitfield = np.zeros(distribute_buffer.chunk_count, dtype=np.bool_)
+        #         self._received_begin_buffer_msg = True
 
     def _buffer_progress(self):
         if len(self._chunks_bitfield) == 0:

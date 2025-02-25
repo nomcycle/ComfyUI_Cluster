@@ -14,16 +14,11 @@ from .protobuf.messages_pb2 import (ClusterMessageType, ClusterAck, ClusterReque
 
 from .log import logger
 from .env_vars import EnvVars
-from .udp_base import UDPBase
+from .udp_base import UDPBase, ACKResult
 from .udp_base import UDPSingleton
 from .queued import IncomingPacket, IncomingMessage, OutgoingPacket
 from .pending_messages import PendingMessage, PendingInstanceMessage
     
-class ACKResult:
-    def __init__(self, success: bool, error_msg: str = None):
-        self.success = success
-        self.error_msg = error_msg
-
 class UDPMessageHandler(UDPBase):
     def __init__(self, state_loop, incoming_processed_packet_queue: queue.Queue):
         super().__init__(incoming_processed_packet_queue)
@@ -40,6 +35,9 @@ class UDPMessageHandler(UDPBase):
         self._instance_fence_futures: Dict[int, asyncio.Future] = {}
         self._queued_instance_fence_signals: Dict[int, queue.Queue[IncomingMessage]] = {}
 
+        self._received_expected_messages: Dict[int, IncomingMessage] = {}
+        self._awaiting_expected_futures: Dict[int, asyncio.Future] = {}
+
         self._outgoing_thread_lock = threading.Lock()
 
         UDPSingleton.add_outgoing_thread_callback(self._outgoing_thread_callback)
@@ -47,7 +45,6 @@ class UDPMessageHandler(UDPBase):
 
     def _handle_incoming_packet(self, incoming_packet: IncomingPacket):
         try:
-            self._process_pending_fence_signals()
             if incoming_packet.get_is_buffer():
                 return
             incoming_msg: IncomingMessage = self._validate_incoming_message(incoming_packet)
@@ -63,6 +60,9 @@ class UDPMessageHandler(UDPBase):
     
     def _outgoing_thread_callback(self):
         try:
+            self._process_pending_fence_signals()
+            self._process_received_expected_messages()
+
             self._process_pending_messages()
             UDPSingleton.process_batch_outgoing(
                 self.dequeue_outgoing_packet,
@@ -109,6 +109,14 @@ class UDPMessageHandler(UDPBase):
                     except queue.Empty:
                         break
 
+    def _process_received_expected_messages(self):
+        # Process any received expected messages that have matching awaiting futures
+        for expected_key in list(self._awaiting_expected_futures.keys()):
+            if expected_key in self._received_expected_messages:
+                self._complete_future(self._awaiting_expected_futures[expected_key], True, self._received_expected_messages[expected_key], None)
+                del self._awaiting_expected_futures[expected_key]
+                del self._received_expected_messages[expected_key]
+
     def _process_pending_messages(self):
         self._process_outgoing_message_acks()
 
@@ -129,10 +137,10 @@ class UDPMessageHandler(UDPBase):
                 if not pending.future.done():
                     self._complete_future(pending.future, False, "Send failed")
 
-    def _complete_future(self, future, success: bool, error_msg: str = None):
+    def _complete_future(self, future, success: bool, data: object | None = None, error_msg: str = None):
         if not success:
             logger.error("Future failed: %s", error_msg)
-        self._state_loop.call_soon_threadsafe(future.set_result, ACKResult(success, error_msg))
+        self._state_loop.call_soon_threadsafe(future.set_result, ACKResult(success, data, error_msg=error_msg))
     
     def _validate_incoming_message(self, packet: IncomingPacket):
         if packet.get_is_buffer():
@@ -166,6 +174,8 @@ class UDPMessageHandler(UDPBase):
             return None
 
         require_ack: bool = header.get('requireAck', False)
+        expected_key = header.get('expectedKey', -1)
+
         return IncomingMessage(
             packet.sender_addr,
             sender_instance_id,
@@ -173,6 +183,7 @@ class UDPMessageHandler(UDPBase):
             message_id,
             msg_type,
             require_ack,
+            expected_key,
             message)
 
     def _process_incoming_message(self, incoming_msg: IncomingMessage):
@@ -184,6 +195,8 @@ class UDPMessageHandler(UDPBase):
                 self._handle_resolved_state(incoming_msg)
             elif incoming_msg.msg_type == ClusterMessageType.AWAITING_FENCE:
                 self._handle_await_Fence(incoming_msg)
+            elif incoming_msg.expected_key > -1:
+                self._handle_expected_message(incoming_msg)
             else: self._handle_non_ack_message(incoming_msg)
 
             if incoming_msg.require_ack:
@@ -313,6 +326,34 @@ class UDPMessageHandler(UDPBase):
 
         return await future
 
+    def _handle_expected_message(self, incoming_message: IncomingMessage):
+        expected_key = incoming_message.expected_key
+        if expected_key in self._awaiting_expected_futures:
+            self._complete_future(self._awaiting_expected_futures[expected_key], True, incoming_message)
+            del self._awaiting_expected_futures[expected_key]
+        else:
+            if expected_key in self._received_expected_messages:
+                raise Exception(f"Received duplicate expected message with key {expected_key}")
+            self._received_expected_messages[expected_key] = incoming_message
+
+    async def await_exepected_message_thread_safe(self, expected_key: int):
+        return await self._execute_coroutine_thread_safe(self.await_exepected_message(expected_key))
+
+    async def send_exepected_message_thread_safe(self, message, expected_key: int, instance_id: int | None = None):
+        return await self._execute_coroutine_thread_safe(self.send_exepected_message(message, expected_key, instance_id))
+    
+    async def await_exepected_message(self, expected_key: int):
+        if expected_key in self._awaiting_expected_futures:
+            raise Exception(f"Already awaiting message with key {expected_key}")
+
+        future = self._state_loop.create_future()
+        self._awaiting_expected_futures[expected_key] = future
+        return await future
+
+    async def send_exepected_message(self, message, expected_key: int, instance_id: int | None = None):
+        message.header.expected_key = expected_key
+        return await self.send_and_wait(message, instance_id)
+
     def _handle_await_Fence(self, incoming_msg: IncomingMessage):
         await_fence = ParseDict(incoming_msg.message, ClusterAwaitingFence())
         if await_fence.fence_id in self._instance_fence_states:
@@ -336,7 +377,7 @@ class UDPMessageHandler(UDPBase):
         if fence_id in self._instance_fence_states:
             msg = f"Previous fence with id {fence_id} has not resolved"
             logger.error(msg)
-            return ACKResult(False, msg)
+            return ACKResult(False, error_msg=msg)
 
         future = self._state_loop.create_future()
         message = ClusterAwaitingFence()
@@ -401,7 +442,7 @@ class UDPMessageHandler(UDPBase):
     async def send_and_wait(self, message, instance_id: int | None = None):
         if not message.header.require_ack:
             _ = self.send_no_wait(message, instance_id)
-            return ACKResult(True, None)
+            return ACKResult(True)
 
         message_id = self._prepare_message(message)
         pending_msg = self._create_pending_message(message_id, message, instance_id)
