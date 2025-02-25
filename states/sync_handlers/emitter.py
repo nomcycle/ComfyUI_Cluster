@@ -142,9 +142,14 @@ class Emitter(SyncHandler):
         self._create_chunks(self._this_instance_dependency_byte_buffer)
 
     def _has_received_all_instance_resend_requests(self) -> bool:
+        valid_states = [OtherInstanceState.REQUESTED_RESEND, OtherInstanceState.COMPLETE_BUFFER]
+        
         for instance_id in self._to_instance_ids:
-            if instance_id not in self._instance_states or self._instance_states[instance_id] not in [OtherInstanceState.REQUESTED_RESEND, OtherInstanceState.AWAITING_CHUNKS]:
+            # Check if instance exists and is in a valid state
+            instance_state = self._instance_states.get(instance_id)
+            if instance_state not in valid_states:
                 return False
+                
         return True
 
     async def tick(self):

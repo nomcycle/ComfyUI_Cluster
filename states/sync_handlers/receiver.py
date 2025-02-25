@@ -94,7 +94,7 @@ class Receiver(SyncHandler):
 
     async def tick(self):
         if not self._received_begin_buffer_msg:
-            return
+            return await asyncio.sleep(0.001)
 
         with self._thread_lock:
             current_time = time.time()
@@ -103,7 +103,7 @@ class Receiver(SyncHandler):
             time_since_last_poll = current_time - self._time_since_polling_chunk_progress
 
             if incoming_queue_size == 0 or time_since_last_packet < 1 or time_since_last_poll < 1:
-                await asyncio.sleep(0.001)
+                return await asyncio.sleep(0.001)
 
             self._time_since_polling_chunk_progress = current_time
             
