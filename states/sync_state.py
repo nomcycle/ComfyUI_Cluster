@@ -1,9 +1,11 @@
+from enum import Enum, auto
 from typing import Callable, Dict, List, TYPE_CHECKING
 
 import asyncio
 import numpy as np
 import torch
 import threading
+import random
 
 from ..log import logger
 from google.protobuf.json_format import ParseDict
@@ -24,6 +26,14 @@ from .sync_handlers.emitter import Emitter
 from .sync_handlers.receiver import Receiver
 
 from .sync_handlers.sync_handler import SyncHandler
+
+from ..synced_random import SyncedRandom
+
+_fanout_expected_msg_key: int = abs(SyncedRandom.get_random_int())
+_gather_expected_msg_key: int = abs(SyncedRandom.get_random_int())
+
+logger.debug(f"Fanout expected message key: {_fanout_expected_msg_key}")
+logger.debug(f"Gather expected message key: {_gather_expected_msg_key}")
 
 class SyncStateHandler(StateHandler):
     def __init__(self, instance: ThisInstance):
@@ -132,7 +142,9 @@ class SyncStateHandler(StateHandler):
 
             self._clear_delegates()
 
-    async def _begin_gather_buffers(self, byte_buffer: bytes) -> list[bytes]:
+    async def _begin_gather_tensors(self, tensor: torch.Tensor) -> tuple[list[bytes],tuple[int]]:
+
+        byte_buffer = tensor.numpy().tobytes()
 
         all_instanced_received_buffer: asyncio.Future = asyncio.get_running_loop().create_future()
 
@@ -145,8 +157,12 @@ class SyncStateHandler(StateHandler):
 
         on_instance_received_buffer: List[asyncio.Future] = [None] * EnvVars.get_instance_count()
         receivers: List[Receiver] = [None] * EnvVars.get_instance_count()
+
         received_buffers: List[bytes] = [None] * EnvVars.get_instance_count()
         received_buffers[EnvVars.get_instance_index()] = byte_buffer
+
+        received_buffer_shapes: list[tuple[int]] = [None] * EnvVars.get_instance_count()
+        received_buffer_shapes[EnvVars.get_instance_index()] = tensor.shape
 
         for instance_index in range(EnvVars.get_instance_count()):
             on_instance_received_buffer[instance_index] = asyncio.get_running_loop().create_future()
@@ -161,6 +177,7 @@ class SyncStateHandler(StateHandler):
             if current_emitter_instance_id == EnvVars.get_instance_index():
                 self._register_delegates(emitter.handle_message, None, emitter.tick)
 
+                await self._send_buffer_descriptor(tensor, _gather_expected_msg_key)
                 await emitter.begin()
                 await all_instanced_received_buffer
 
@@ -173,16 +190,19 @@ class SyncStateHandler(StateHandler):
                     receivers[current_emitter_instance_id].handle_buffer,
                     receivers[current_emitter_instance_id].tick)
 
+                buffer_descriptor: ClusterDistributeBufferDescriptor = await self._receive_buffer_descriptor(_gather_expected_msg_key)
                 await receivers[current_emitter_instance_id].begin()
+
                 result = await on_instance_received_buffer[current_emitter_instance_id]
                 buffer = result.get_buffer()
                 if len(buffer) == 0:
                     raise Exception(f"Failed to receive buffer from instance {current_emitter_instance_id}")
                 received_buffers[current_emitter_instance_id] = buffer
+                received_buffer_shapes[current_emitter_instance_id] = tuple(buffer_descriptor.buffer_shape)
 
                 self._clear_delegates()
 
-        return received_buffers
+        return received_buffers, received_buffer_shapes
 
     async def begin_tensor_broadcast(self, tensor: torch.Tensor):
 
@@ -190,26 +210,16 @@ class SyncStateHandler(StateHandler):
         byte_buffer = tensor.numpy().tobytes()
 
         await self._begin_buffer_broadcast(byte_buffer)
-
-    async def begin_fanout_emitter(self, tensor: torch.Tensor):
-        logger.info("Distributing tensor of shape %s", tensor.shape)
-
-        # Send tensor metadata to receivers
+    
+    async def _send_buffer_descriptor(self, tensor: torch.Tensor, expected_key: int):
         message = ClusterDistributeBufferDescriptor()
-        message.header.type = ClusterMessageType.DISTRIBUTE_BUFFER_DESCRIPTOR 
+        message.header.type = ClusterMessageType.DISTRIBUTE_BUFFER_DESCRIPTOR
         message.header.require_ack = True
         message.buffer_shape.extend(list(tensor.shape))
-        await self._instance.cluster.udp_message_handler.send_expected_message_thread_safe(message, 9) # Fixed typo in method name
+        await self._instance.cluster.udp_message_handler.send_expected_message_thread_safe(message, expected_key) # Fixed typo in method name
 
-        # Convert tensor to bytes and distribute
-        byte_buffer = tensor.numpy().tobytes()
-        await self._begin_buffer_broadcast(byte_buffer)
-
-        self._exit_state = True
-        return tensor
-
-    async def begin_fanout_receiver(self) -> torch.Tensor:
-        result = await self._instance.cluster.udp_message_handler.await_expected_message_thread_safe(9) # Fixed typo in method name
+    async def _receive_buffer_descriptor(self, expected_key: int) -> ClusterDistributeBufferDescriptor:
+        result = await self._instance.cluster.udp_message_handler.await_expected_message_thread_safe(expected_key) # Fixed typo in method name
         if not result.success or not result.data:
             raise Exception("Failed to receive fanout tensor metadata")
 
@@ -220,6 +230,23 @@ class SyncStateHandler(StateHandler):
             raise Exception("Invalid buffer descriptor - missing shape information")
 
         logger.debug(f"Received buffer descriptor from instance {incoming_message.sender_instance_id} for tensor with shape: {buffer_descriptor.buffer_shape}")
+        return buffer_descriptor
+
+    async def begin_fanout_emitter(self, tensor: torch.Tensor):
+        logger.info("Distributing tensor of shape %s", tensor.shape)
+
+        await self._send_buffer_descriptor(tensor, _fanout_expected_msg_key)
+
+        # Convert tensor to bytes and distribute
+        byte_buffer = tensor.numpy().tobytes()
+        await self._begin_buffer_broadcast(byte_buffer)
+
+        self._exit_state = True
+        return tensor
+
+    async def begin_fanout_receiver(self) -> torch.Tensor:
+
+        buffer_descriptor: ClusterDistributeBufferDescriptor = await self._receive_buffer_descriptor(_fanout_expected_msg_key)
 
         buffer = await self._begin_fanout_receiver() # Fixed incorrect method name
         array = np.frombuffer(buffer, dtype=np.float32)
@@ -236,29 +263,16 @@ class SyncStateHandler(StateHandler):
 
         logger.info("Syncing tensor of shape %s", tensor.shape)
         # Get original shape and convert tensor to bytes
-        original_shape = tensor.shape
-        byte_buffer = tensor.numpy().tobytes()
 
         # This should keep blocking until we get all buffers.
-        buffers = await self._begin_gather_buffers(byte_buffer)
+        buffers, shapes = await self._begin_gather_tensors(tensor)
         
-        # Reconstruct tensor from received buffers
-        instance_count = EnvVars.get_instance_count()
-        
-        combined_buffer = b''.join(buffers)
-        array = np.frombuffer(combined_buffer, dtype=np.float32)
-        
-        # Reshape into batch tensor using original shape
-        batch_shape = (instance_count,) + original_shape
-        batch_tensor = torch.from_numpy(array).reshape(batch_shape)
-        
-        logger.info("Tensor distribution complete. Final shape: %s", batch_tensor.shape)
-
-        # self._this_instance_state = ThisInstanceState.DONE
-
-        # result = await self._instance.cluster.udp_message_handler.request_state_thread_safe(ClusterState.IDLE)
-        # if not result.result:
-        #     return
-
+        # Convert each buffer into a tensor with its original shape
+        tensors = []
+        for buffer, shape in zip(buffers, shapes):
+            array = np.frombuffer(buffer, dtype=np.float32)
+            tensor = torch.from_numpy(array).reshape(shape)
+            tensors.append(tensor)
+            
         self._exit_state = True
-        return batch_tensor
+        return tensors
