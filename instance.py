@@ -97,7 +97,7 @@ class ThisInstance(Instance):
 
     async def fanout_tensor(self, tensor):
         sync_state_handler = await self._setup_sync_state()
-        await sync_state_handler.begin_fanout_emitter(tensor)
+        return await sync_state_handler.begin_fanout_emitter(tensor)
 
     async def receive_tensor_fanout(self):
         sync_state_handler = await self._setup_sync_state()

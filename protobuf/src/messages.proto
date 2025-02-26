@@ -99,7 +99,6 @@ message ClusterDistributeBufferResend {
 
 message ClusterDistributeBufferDescriptor {
     ClusterMessageHeader header = 1;
-    int32 buffer_type = 2;
     repeated int32 buffer_shape = 3;
 }
 

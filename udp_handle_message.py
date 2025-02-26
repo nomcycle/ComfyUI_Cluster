@@ -336,10 +336,10 @@ class UDPMessageHandler(UDPBase):
                 raise Exception(f"Received duplicate expected message with key {expected_key}")
             self._received_expected_messages[expected_key] = incoming_message
 
-    async def await_exepected_message_thread_safe(self, expected_key: int):
+    async def await_expected_message_thread_safe(self, expected_key: int):
         return await self._execute_coroutine_thread_safe(self.await_exepected_message(expected_key))
 
-    async def send_exepected_message_thread_safe(self, message, expected_key: int, instance_id: int | None = None):
+    async def send_expected_message_thread_safe(self, message, expected_key: int, instance_id: int | None = None):
         return await self._execute_coroutine_thread_safe(self.send_exepected_message(message, expected_key, instance_id))
     
     async def await_exepected_message(self, expected_key: int):

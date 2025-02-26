@@ -86,7 +86,7 @@ class Emitter(SyncHandler):
             chunk_count=chunk_count
         )
 
-        await self._udp_message_handler.send_exepected_message_thread_safe(message, 8)
+        await self._udp_message_handler.send_expected_message_thread_safe(message, 8)
         self._sent_begin_buffer = True
 
     async def handle_message(self, current_state: int, incoming_message: IncomingMessage) -> StateResult | None:

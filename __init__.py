@@ -67,7 +67,7 @@ class ClusterExecuteWorkflow(SyncedNode):
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
 
-        with open(workflow_path, 'r') as f:
+        with open(f'user/default/workflows/{workflow_path}', 'r') as f:
             workflow_json = json.load(f)
 
         instance: InstanceLoop = get_instance_loop()
@@ -208,7 +208,7 @@ class ClusterTensorNodeBase(SyncedNode):
 
     def execute(self, input):
         try:
-            output = self.blocking_sync(self.get_input(input))
+            output = self.blocking_sync(input)
             return self._prepare_output(output)
         except Exception as e:
             logger.error("Error executing tensor operation: %s\n%s", str(e), traceback.format_exc())
@@ -225,10 +225,11 @@ class ClusterFanOutBase(ClusterTensorNodeBase):
     def _sync_operation(self, instance, input):
         if len(input.shape) != 4 or input.shape[0] != EnvVars.get_instance_count():
             raise ValueError(f"Image count in batch must match the cluster instance count: {EnvVars.get_instance_count()}")
+        instance_id = EnvVars.get_instance_index()
         return instance._this_instance.fanout_tensor(input)
 
     def _prepare_output(self, output):
-        return (self.get_input(output),)
+        return (output[EnvVars.get_instance_index():EnvVars.get_instance_index()+1],)
 
 class ClusterImageNodeMixin:
     INPUT_TYPE = "IMAGE"

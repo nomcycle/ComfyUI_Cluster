@@ -10,7 +10,7 @@ from google.protobuf.json_format import ParseDict
 from ..protobuf.messages_pb2 import (
     ClusterState, ClusterMessageType, ClusterDistributeBufferBegin, 
     ClusterDistributeBufferAck, ClusterBufferType, ClusterMessageHeader,
-    ClusterDistributeBufferResend
+    ClusterDistributeBufferResend, ClusterDistributeBufferDescriptor,
 )
 
 from .state_handler import StateHandler
@@ -85,12 +85,12 @@ class SyncStateHandler(StateHandler):
 
         self._register_delegates(receiver.handle_message, receiver.handle_buffer, receiver.tick)
 
-        receiver.begin()
+        await receiver.begin()
         result = await completed_buffer
 
         self._clear_delegates()
 
-        return result.buffer
+        return result.get_buffer()
 
     async def _begin_buffer_broadcast(self, byte_buffer: bytes):
         all_instanced_received_buffer: asyncio.Future = asyncio.get_running_loop().create_future()
@@ -192,12 +192,43 @@ class SyncStateHandler(StateHandler):
         await self._begin_buffer_broadcast(byte_buffer)
 
     async def begin_fanout_emitter(self, tensor: torch.Tensor):
-
         logger.info("Distributing tensor of shape %s", tensor.shape)
-        await self._begin_fanout_emitter(tensor)
+
+        # Send tensor metadata to receivers
+        message = ClusterDistributeBufferDescriptor()
+        message.header.type = ClusterMessageType.DISTRIBUTE_BUFFER_DESCRIPTOR 
+        message.header.require_ack = True
+        message.buffer_shape.extend(list(tensor.shape))
+        await self._instance.cluster.udp_message_handler.send_expected_message_thread_safe(message, 9) # Fixed typo in method name
+
+        # Convert tensor to bytes and distribute
+        byte_buffer = tensor.numpy().tobytes()
+        await self._begin_buffer_broadcast(byte_buffer)
+
+        self._exit_state = True
+        return tensor
 
     async def begin_fanout_receiver(self) -> torch.Tensor:
-        buffer = await self._begin_fanout_receiver()
+        result = await self._instance.cluster.udp_message_handler.await_expected_message_thread_safe(9) # Fixed typo in method name
+        if not result.success or not result.data:
+            raise Exception("Failed to receive fanout tensor metadata")
+
+        incoming_message: IncomingMessage = result.data
+        buffer_descriptor = ParseDict(incoming_message.message, ClusterDistributeBufferDescriptor())
+
+        if not buffer_descriptor.buffer_shape or len(buffer_descriptor.buffer_shape) == 0:
+            raise Exception("Invalid buffer descriptor - missing shape information")
+
+        logger.debug(f"Received buffer descriptor from instance {incoming_message.sender_instance_id} for tensor with shape: {buffer_descriptor.buffer_shape}")
+
+        buffer = await self._begin_fanout_receiver() # Fixed incorrect method name
+        array = np.frombuffer(buffer, dtype=np.float32)
+        tensor = torch.from_numpy(array).reshape(tuple(buffer_descriptor.buffer_shape))
+        
+        logger.info("Received fanout tensor of shape %s", tensor.shape)
+        
+        self._exit_state = True
+        return tensor
 
     async def begin_gathering_tensors(self, tensor: torch.Tensor) -> torch.Tensor:
         # TODO: Current implementation assumes all tensors have same shape

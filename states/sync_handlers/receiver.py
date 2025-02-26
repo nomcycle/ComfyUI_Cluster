@@ -57,7 +57,7 @@ class Receiver(SyncHandler):
 
         await self._fence_instances()
 
-        result = await self._udp_message_handler.await_exepected_message_thread_safe(8)
+        result = await self._udp_message_handler.await_expected_message_thread_safe(8)
         if not result.success or not result.data:
             raise Exception("Failed to receive buffer begin message")
         buffer_begin_message = result.data
