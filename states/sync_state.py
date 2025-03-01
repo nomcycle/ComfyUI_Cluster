@@ -117,13 +117,45 @@ class SyncStateHandler(StateHandler):
         await all_instanced_received_buffer
 
         self._clear_delegates()
+    
+    def split_batch(self, tensor: torch.Tensor, instance_id: int) -> tuple[int, int]:
+        batch_size = tensor.shape[0]
+        instance_count = EnvVars.get_instance_count()
+        base_per_instance = batch_size // instance_count
+        remainder = batch_size % instance_count
+        
+        start_idx = instance_id * base_per_instance + min(instance_id, remainder)
+        # If this instance gets an extra item from remainder
+        extra = 1 if instance_id < remainder else 0
+        end_idx = start_idx + base_per_instance + extra
+
+        # Log batch splitting information
+        logger.info(
+            f"Instance {instance_id}: Splitting batch of size {batch_size} into {instance_count} parts. "
+            f"Assigned slice [{start_idx}:{end_idx}] (size: {end_idx-start_idx})"
+            f"{' with extra item from remainder' if extra else ''}"
+        )
+        
+        return start_idx, end_idx
 
     async def _begin_fanout_emitter(self, tensor: torch.Tensor):
+        # Calculate indices for current instance
+        instance_id = EnvVars.get_instance_index()
+        start_idx, end_idx = self.split_batch(tensor, instance_id)
+        
+        # Extract the tensor slice for the current instance
+        output = tensor[start_idx:end_idx]
 
         for instance_id in range(EnvVars.get_instance_count()):
+            if instance_id == EnvVars.get_instance_index():
+                continue
 
-            # Extract single image from batch
-            image_tensor = tensor[instance_id:instance_id+1]
+            # Calculate indices for target instance
+            start_idx, end_idx = self.split_batch(tensor, instance_id)
+            
+            # Extract the appropriate slice for this instance
+            image_tensor = tensor[start_idx:end_idx]
+            await self._send_buffer_descriptor(image_tensor, _fanout_expected_msg_key)
             byte_buffer = image_tensor.numpy().tobytes()
 
             all_instanced_received_buffer: asyncio.Future = asyncio.get_running_loop().create_future()
@@ -141,6 +173,8 @@ class SyncStateHandler(StateHandler):
             await all_instanced_received_buffer
 
             self._clear_delegates()
+
+        return output
 
     async def _begin_gather_tensors(self, tensor: torch.Tensor) -> tuple[list[bytes],tuple[int]]:
 
@@ -234,15 +268,9 @@ class SyncStateHandler(StateHandler):
 
     async def begin_fanout_emitter(self, tensor: torch.Tensor):
         logger.info("Distributing tensor of shape %s", tensor.shape)
-
-        await self._send_buffer_descriptor(tensor, _fanout_expected_msg_key)
-
-        # Convert tensor to bytes and distribute
-        byte_buffer = tensor.numpy().tobytes()
-        await self._begin_buffer_broadcast(byte_buffer)
-
+        output = await self._begin_fanout_emitter(tensor)
         self._exit_state = True
-        return tensor
+        return output
 
     async def begin_fanout_receiver(self) -> torch.Tensor:
 

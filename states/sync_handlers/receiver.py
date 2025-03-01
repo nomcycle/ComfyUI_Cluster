@@ -131,7 +131,9 @@ class Receiver(SyncHandler):
                     await self._udp_message_handler.send_and_wait(message, self._sender_instance_id)
 
                     logger.info(f"All chunks received from instance {self._sender_instance_id}, joining buffers")
-                    joined_buffer = b''.join(self._dependency_chunks.values())
+                    # Join chunks in correct order using chunk IDs
+                    ordered_chunks = [self._dependency_chunks[chunk_id] for chunk_id in sorted(self._dependency_chunks.keys())]
+                    joined_buffer = b''.join(ordered_chunks)
 
                     self._async_loop.call_soon_threadsafe(self._completed_buffer_event.set_result, CompletedBufferEvent(joined_buffer))
 

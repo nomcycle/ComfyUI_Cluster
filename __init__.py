@@ -179,18 +179,19 @@ class ClusterTensorNodeBase(SyncedNode):
     def __init__(self):
         super().__init__()
 
+    INPUT_TYPE = None # Set by child classes
+
     @classmethod
     def INPUT_TYPES(s):
         return {
             "required": {
                 "input": (s.INPUT_TYPE,),
-            }
+            },
         }
 
     RETURN_TYPES = (None,) # Set by child classes
     FUNCTION = "execute"
     CATEGORY = "Cluster"
-    INPUT_TYPE = None # Set by child classes
 
     @abstractmethod
     def get_input(self, input) -> torch.Tensor:
@@ -218,18 +219,19 @@ class ClusterTensorNodeBase(SyncedNode):
         return (output,)
 
 class ClusterGatherBase(ClusterTensorNodeBase):
+    OUTPUT_IS_LIST = (True,)
     def _sync_operation(self, instance, input):
         return instance._this_instance.gather_tensors(input)
 
 class ClusterFanOutBase(ClusterTensorNodeBase):
     def _sync_operation(self, instance, input):
-        if len(input.shape) != 4 or input.shape[0] != EnvVars.get_instance_count():
-            raise ValueError(f"Image count in batch must match the cluster instance count: {EnvVars.get_instance_count()}")
+        if len(input.shape) != 4 or input.shape[0] < EnvVars.get_instance_count():
+            raise ValueError(f"Input must be a batch with at least: {EnvVars.get_instance_count()} tensors.")
         instance_id = EnvVars.get_instance_index()
         return instance._this_instance.fanout_tensor(input)
 
     def _prepare_output(self, output):
-        return (output[EnvVars.get_instance_index():EnvVars.get_instance_index()+1],)
+        return (output,)
 
 class ClusterImageNodeMixin:
     INPUT_TYPE = "IMAGE"

@@ -33,7 +33,7 @@ class UDPMessageHandler(UDPBase):
 
         self._instance_fence_states: Dict[int, Dict[int, bool]] = {}
         self._instance_fence_futures: Dict[int, asyncio.Future] = {}
-        self._queued_instance_fence_signals: Dict[int, queue.Queue[IncomingMessage]] = {}
+        self._queued_instance_fence_signals: Dict[int, Dict[int, IncomingMessage]] = {}
 
         self._received_expected_messages: Dict[int, IncomingMessage] = {}
         self._awaiting_expected_futures: Dict[int, asyncio.Future] = {}
@@ -98,18 +98,16 @@ class UDPMessageHandler(UDPBase):
                             self._queue_outgoing_to_instance(pending.message, pending_ack.instance_id)
 
     def _process_pending_fence_signals(self):
-        # Process any queued fence signals for active fence states
-        for fence_id in list(self._instance_fence_states.keys()):
+        for fence_id in list(self._queued_instance_fence_signals.keys()):
             queued_signals = self._queued_instance_fence_signals.get(fence_id)
             if queued_signals:
-                while True:
-                    try:
-                        incoming_msg = queued_signals.get_nowait()
+                for message_id, incoming_msg in list(queued_signals.items()):
+                    if fence_id in self._instance_fence_states:
                         self._handle_await_Fence(incoming_msg)
-                    except queue.Empty:
-                        break
+                        del queued_signals[message_id]
 
     def _process_received_expected_messages(self):
+
         # Process any received expected messages that have matching awaiting futures
         for expected_key in list(self._awaiting_expected_futures.keys()):
             if expected_key in self._received_expected_messages:
@@ -366,9 +364,9 @@ class UDPMessageHandler(UDPBase):
                 logger.debug(f"Instance {incoming_msg.sender_instance_id} not found in fence states for fence {await_fence.fence_id}")
         else:
             if await_fence.fence_id not in self._queued_instance_fence_signals:
-                self._queued_instance_fence_signals[await_fence.fence_id] = queue.Queue()
-            self._queued_instance_fence_signals[await_fence.fence_id].put_nowait(incoming_msg)
-            # logger.debug(f"No fence states found for fence {await_fence.fence_id}")
+                self._queued_instance_fence_signals[await_fence.fence_id] = {}
+            message_id = incoming_msg.message_id
+            self._queued_instance_fence_signals[await_fence.fence_id][message_id] = incoming_msg
 
     async def await_fence_thread_safe(self, fence_id: int):
         return await self._execute_coroutine_thread_safe(self.await_fence(fence_id))
