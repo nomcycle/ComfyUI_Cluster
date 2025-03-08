@@ -13,6 +13,8 @@ from .sync_handler import SyncHandler
 from ...udp_handle_message import UDPMessageHandler
 from ...udp_handle_buffer import UDPBufferHandler
 
+from ...expected_msg import BEGIN_BUFFER_EXPECTED_MSG_KEY
+
 from google.protobuf.json_format import ParseDict
 from ...protobuf.messages_pb2 import (
     ClusterState, ClusterMessageType, ClusterDistributeBufferBegin, 
@@ -57,7 +59,7 @@ class Receiver(SyncHandler):
 
         await self._fence_instances()
 
-        result = await self._udp_message_handler.await_expected_message_thread_safe(8)
+        result = await self._udp_message_handler.await_expected_message_thread_safe(BEGIN_BUFFER_EXPECTED_MSG_KEY)
         if not result.success or not result.data:
             raise Exception("Failed to receive buffer begin message")
         buffer_begin_message = result.data

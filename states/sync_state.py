@@ -1,8 +1,11 @@
+from datetime import datetime
 from enum import Enum, auto
+import json
 from typing import Callable, Dict, List, TYPE_CHECKING
 
 import asyncio
 import numpy as np
+import requests
 import torch
 import threading
 import random
@@ -13,6 +16,7 @@ from ..protobuf.messages_pb2 import (
     ClusterState, ClusterMessageType, ClusterDistributeBufferBegin, 
     ClusterDistributeBufferAck, ClusterBufferType, ClusterMessageHeader,
     ClusterDistributeBufferResend, ClusterDistributeBufferDescriptor,
+    ClusterDistributePrompt
 )
 
 from .state_handler import StateHandler
@@ -27,13 +31,7 @@ from .sync_handlers.receiver import Receiver
 
 from .sync_handlers.sync_handler import SyncHandler
 
-from ..synced_random import SyncedRandom
-
-_fanout_expected_msg_key: int = abs(SyncedRandom.get_random_int())
-_gather_expected_msg_key: int = abs(SyncedRandom.get_random_int())
-
-logger.debug(f"Fanout expected message key: {_fanout_expected_msg_key}")
-logger.debug(f"Gather expected message key: {_gather_expected_msg_key}")
+from ..expected_msg import FANOUT_EXPECTED_MSG_KEY, GATHER_EXPECTED_MSG_KEY
 
 class SyncStateHandler(StateHandler):
     def __init__(self, instance: ThisInstance):
@@ -51,6 +49,7 @@ class SyncStateHandler(StateHandler):
 
         super().__init__(instance,
                          ClusterState.EXECUTING,
+                         ClusterMessageType.DISTRIBUTE_PROMPT               |
                          ClusterMessageType.DISTRIBUTE_BUFFER_BEGIN         |
                          ClusterMessageType.DISTRIBUTE_BUFFER_RESEND        |
                          ClusterMessageType.DISTRIBUTE_BUFFER_ACK)
@@ -60,12 +59,32 @@ class SyncStateHandler(StateHandler):
     async def handle_state(self, current_state: int) -> StateResult | None:
         if self._state_handler_callback and callable(self._state_handler_callback):
             await self._state_handler_callback()
-        if self._exit_state:
-            from .idle_state import IdleStateHandler
-            return StateResult(current_state, self, ClusterState.IDLE, IdleStateHandler(self._instance))
+        # if self._exit_state:
+        #     from .idle_state import IdleStateHandler
+        #     return StateResult(current_state, self, ClusterState.IDLE, IdleStateHandler(self._instance))
         return None
 
     async def handle_message(self, current_state: int, incoming_message: IncomingMessage) -> StateResult | None:
+        if incoming_message.msg_type == ClusterMessageType.DISTRIBUTE_PROMPT:
+            distribute_prompt = ParseDict(incoming_message.message, ClusterDistributePrompt())
+
+            prompt_json = json.loads(distribute_prompt.prompt)
+            json_data = {
+                'prompt': prompt_json['output'],
+                'extra_data': { 'extra_pnginfo': prompt_json['workflow'] },
+                    "client_id": datetime.now().strftime("%Y%m%d_%H%M%S"),
+                    # "output_node_ids": self._flush_output_node_cache(prompt_json)
+                }
+
+            url = f"http://localhost:{EnvVars.get_comfy_port()}/prompt"
+            try:
+                response = requests.post(url, json=json_data)
+                response.raise_for_status()
+                logger.info("Successfully posted prompt to local ComfyUI instance")
+
+            except requests.exceptions.RequestException as e:
+                logger.error(f"Error posting prompt: {str(e)}")
+
         if self._message_handler_callback is None or not callable(self._message_handler_callback):
             return None
         return await self._message_handler_callback(current_state, incoming_message)
@@ -102,8 +121,10 @@ class SyncStateHandler(StateHandler):
 
         return result.get_buffer()
 
-    async def _begin_buffer_broadcast(self, byte_buffer: bytes):
+    async def _begin_buffer_broadcast(self, tensor: torch.tensor):
         all_instanced_received_buffer: asyncio.Future = asyncio.get_running_loop().create_future()
+        await self._send_buffer_descriptor(tensor, FANOUT_EXPECTED_MSG_KEY)
+        byte_buffer = tensor.numpy().tobytes()
         emitter: Emitter = Emitter(
             self._instance.cluster.udp_message_handler,
             self._instance.cluster.udp_buffer_handler,
@@ -117,6 +138,7 @@ class SyncStateHandler(StateHandler):
         await all_instanced_received_buffer
 
         self._clear_delegates()
+        return tensor
     
     def split_batch(self, tensor: torch.Tensor, instance_id: int) -> tuple[int, int]:
         batch_size = tensor.shape[0]
@@ -155,7 +177,7 @@ class SyncStateHandler(StateHandler):
             
             # Extract the appropriate slice for this instance
             image_tensor = tensor[start_idx:end_idx]
-            await self._send_buffer_descriptor(image_tensor, _fanout_expected_msg_key)
+            await self._send_buffer_descriptor(image_tensor, FANOUT_EXPECTED_MSG_KEY)
             byte_buffer = image_tensor.numpy().tobytes()
 
             all_instanced_received_buffer: asyncio.Future = asyncio.get_running_loop().create_future()
@@ -211,7 +233,7 @@ class SyncStateHandler(StateHandler):
             if current_emitter_instance_id == EnvVars.get_instance_index():
                 self._register_delegates(emitter.handle_message, None, emitter.tick)
 
-                await self._send_buffer_descriptor(tensor, _gather_expected_msg_key)
+                await self._send_buffer_descriptor(tensor, GATHER_EXPECTED_MSG_KEY)
                 await emitter.begin()
                 await all_instanced_received_buffer
 
@@ -224,7 +246,7 @@ class SyncStateHandler(StateHandler):
                     receivers[current_emitter_instance_id].handle_buffer,
                     receivers[current_emitter_instance_id].tick)
 
-                buffer_descriptor: ClusterDistributeBufferDescriptor = await self._receive_buffer_descriptor(_gather_expected_msg_key)
+                buffer_descriptor: ClusterDistributeBufferDescriptor = await self._receive_buffer_descriptor(GATHER_EXPECTED_MSG_KEY)
                 await receivers[current_emitter_instance_id].begin()
 
                 result = await on_instance_received_buffer[current_emitter_instance_id]
@@ -239,11 +261,8 @@ class SyncStateHandler(StateHandler):
         return received_buffers, received_buffer_shapes
 
     async def begin_tensor_broadcast(self, tensor: torch.Tensor):
-
         logger.info("Distributing tensor of shape %s", tensor.shape)
-        byte_buffer = tensor.numpy().tobytes()
-
-        await self._begin_buffer_broadcast(byte_buffer)
+        return await self._begin_buffer_broadcast(tensor)
     
     async def _send_buffer_descriptor(self, tensor: torch.Tensor, expected_key: int):
         message = ClusterDistributeBufferDescriptor()
@@ -274,7 +293,7 @@ class SyncStateHandler(StateHandler):
 
     async def begin_fanout_receiver(self) -> torch.Tensor:
 
-        buffer_descriptor: ClusterDistributeBufferDescriptor = await self._receive_buffer_descriptor(_fanout_expected_msg_key)
+        buffer_descriptor: ClusterDistributeBufferDescriptor = await self._receive_buffer_descriptor(FANOUT_EXPECTED_MSG_KEY)
 
         buffer = await self._begin_fanout_receiver() # Fixed incorrect method name
         array = np.frombuffer(buffer, dtype=np.float32)
@@ -299,7 +318,7 @@ class SyncStateHandler(StateHandler):
         tensors = []
         for buffer, shape in zip(buffers, shapes):
             array = np.frombuffer(buffer, dtype=np.float32)
-            tensor = torch.from_numpy(array).reshape(shape)
+            tensor = torch.from_numpy(array).reshape(shape).unsqueeze(0)  # Add batch dimension of 1
             tensors.append(tensor)
             
         self._exit_state = True

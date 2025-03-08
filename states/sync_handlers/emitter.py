@@ -11,6 +11,7 @@ from ...log import logger
 
 from .sync_handler import SyncHandler
 from ...env_vars import EnvVars
+from ...expected_msg import BEGIN_BUFFER_EXPECTED_MSG_KEY
 
 from google.protobuf.json_format import ParseDict
 from ...protobuf.messages_pb2 import (
@@ -86,7 +87,7 @@ class Emitter(SyncHandler):
             chunk_count=chunk_count
         )
 
-        await self._udp_message_handler.send_expected_message_thread_safe(message, 8)
+        await self._udp_message_handler.send_expected_message_thread_safe(message, BEGIN_BUFFER_EXPECTED_MSG_KEY)
         self._sent_begin_buffer = True
 
     async def handle_message(self, current_state: int, incoming_message: IncomingMessage) -> StateResult | None:

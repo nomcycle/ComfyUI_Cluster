@@ -10,6 +10,7 @@ from ..protobuf.messages_pb2 import (
 
 from .state_handler import StateHandler
 from .idle_state import IdleStateHandler
+from .sync_state import SyncStateHandler
 from .state_result import StateResult
 from ..env_vars import EnvVars
 
@@ -76,4 +77,4 @@ class AnnounceInstanceStateHandler(StateHandler):
         if self._instance.cluster.all_accounted_for() and all_instances_all_accounted_for:
             logger.info("All instances are populated - transitioning to IDLE state")
             self.send_announce()
-            return StateResult(current_state, self, ClusterState.IDLE, IdleStateHandler(self._instance))
+            return StateResult(current_state, self, ClusterState.EXECUTING, SyncStateHandler(self._instance))

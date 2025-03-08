@@ -18,6 +18,7 @@ from .cluster import Cluster
 from .states.state_result import StateResult
 from .env_vars import EnvVars
 from .queued import IncomingMessage, IncomingPacket, IncomingBuffer
+from .expected_msg import EXPECT_DISTRIBUTE_PROMPT_MSG_KEY
 
 if TYPE_CHECKING:
     from .instance_loop import InstanceLoop
@@ -84,28 +85,28 @@ class ThisInstance(Instance):
         if not result.success:
             return
 
-    async def _setup_sync_state(self) -> object:
-        from .states.sync_state import SyncStateHandler
-        sync_state_handler = SyncStateHandler(self)
-        self._current_state_handler = sync_state_handler
-        self._current_state = ClusterState.EXECUTING
-        return sync_state_handler
+    # async def _setup_sync_state(self) -> object:
+    #     from .states.sync_state import SyncStateHandler
+    #     sync_state_handler = SyncStateHandler(self)
+    #     self._current_state_handler = sync_state_handler
+    #     self._current_state = ClusterState.EXECUTING
+    #     return sync_state_handler
     
     async def broadcast_tensor(self, tensor):
-        sync_state_handler = await self._setup_sync_state()
-        await sync_state_handler.begin_tensor_broadcast(tensor)
+        # sync_state_handler = await self._setup_sync_state()
+        return await self._current_state_handler.begin_tensor_broadcast(tensor)
 
     async def fanout_tensor(self, tensor):
-        sync_state_handler = await self._setup_sync_state()
-        return await sync_state_handler.begin_fanout_emitter(tensor)
+        # sync_state_handler = await self._setup_sync_state()
+        return await self._current_state_handler.begin_fanout_emitter(tensor)
 
     async def receive_tensor_fanout(self):
-        sync_state_handler = await self._setup_sync_state()
-        return await sync_state_handler.begin_fanout_receiver()
+        # sync_state_handler = await self._setup_sync_state()
+        return await self._current_state_handler.begin_fanout_receiver()
 
     async def gather_tensors(self, tensor):
-        sync_state_handler = await self._setup_sync_state()
-        return await sync_state_handler.begin_gathering_tensors(tensor)
+        # sync_state_handler = await self._setup_sync_state()
+        return await self._current_state_handler.begin_gathering_tensors(tensor)
 
     async def _change_state(self, incoming_msg: IncomingMessage):
         state_request = ParseDict(incoming_msg.message, ClusterRequestState())
