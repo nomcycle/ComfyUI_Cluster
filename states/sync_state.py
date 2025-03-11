@@ -318,7 +318,9 @@ class SyncStateHandler(StateHandler):
         tensors = []
         for buffer, shape in zip(buffers, shapes):
             array = np.frombuffer(buffer, dtype=np.float32)
-            tensor = torch.from_numpy(array).reshape(shape).unsqueeze(0)  # Add batch dimension of 1
+            tensor = torch.from_numpy(array).reshape(shape)
+            if len(tensor.shape) < 4:  # Check if batch dimension is missing
+                tensor = tensor.unsqueeze(0)  # Add batch dimension of 1
             tensors.append(tensor)
             
         self._exit_state = True

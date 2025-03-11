@@ -163,7 +163,7 @@ class ClusterTensorNodeBase(SyncedNode):
 
     @abstractmethod
     def get_input(self, input) -> torch.Tensor:
-        pass
+        return input
 
     def blocking_sync(self, input):
         loop = asyncio.new_event_loop()
@@ -265,9 +265,6 @@ class ClusterImageNodeMixin:
     INPUT_TYPE = "IMAGE"
     RETURN_TYPES = ("IMAGE",)
     
-    def get_input(self, input) -> torch.Tensor:
-        return input[0]
-
 class ClusterLatentNodeMixin:
     INPUT_TYPE = "LATENT"  
     RETURN_TYPES = ("LATENT",)
