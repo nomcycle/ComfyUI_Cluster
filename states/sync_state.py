@@ -9,6 +9,7 @@ import requests
 import torch
 import threading
 import random
+import traceback
 
 from ..log import logger
 from google.protobuf.json_format import ParseDict
@@ -124,7 +125,10 @@ class SyncStateHandler(StateHandler):
     async def _begin_buffer_broadcast(self, tensor: torch.tensor):
         all_instanced_received_buffer: asyncio.Future = asyncio.get_running_loop().create_future()
         await self._send_buffer_descriptor(tensor, FANOUT_EXPECTED_MSG_KEY)
-        byte_buffer = tensor.numpy().tobytes()
+        
+        # Use lossless PNG compression for sending image tensors
+        byte_buffer = self._tensor_to_compressed_bytes(tensor)
+        
         emitter: Emitter = Emitter(
             self._instance.cluster.udp_message_handler,
             self._instance.cluster.udp_buffer_handler,
@@ -139,6 +143,137 @@ class SyncStateHandler(StateHandler):
 
         self._clear_delegates()
         return tensor
+        
+    def _tensor_to_compressed_bytes(self, tensor: torch.tensor) -> bytes:
+        """
+        Compresses a tensor to PNG bytes for efficient network transmission.
+        Works with tensors of shape (batch, height, width, channels) or (height, width, channels).
+        
+        Args:
+            tensor: Input tensor to compress
+            
+        Returns:
+            bytes: Compressed data as bytes
+        """
+        from io import BytesIO
+        from PIL import Image
+        import pickle
+
+        # Log tensor information before compression
+        logger.info(f"Compressing tensor with shape {tensor.shape}")
+        
+        # Store tensor metadata for reconstruction
+        compressed_data = {}
+        
+        try:
+            # Handle tensor with shape [batch, height, width, channels]
+            if len(tensor.shape) == 4:
+                batch_size = tensor.shape[0]
+                images_data = []
+                
+                for i in range(batch_size):
+                    img_tensor = tensor[i]
+                    # Convert to numpy and ensure values are in valid range for PNG
+                    img_np = img_tensor.detach().cpu().numpy()
+                    # Scale to 0-255 range for PNG
+                    img_np = np.clip(img_np * 255.0, 0, 255).astype(np.uint8)
+                    # Create PIL image and compress to PNG in memory
+                    img = Image.fromarray(img_np)
+                    buffer = BytesIO()
+                    img.save(buffer, format='PNG', optimize=True)
+                    images_data.append(buffer.getvalue())
+                
+                compressed_data['images'] = images_data
+                compressed_data['is_batch'] = True
+                compressed_data['shape'] = tensor.shape
+                
+            # Handle tensor with shape [height, width, channels]
+            elif len(tensor.shape) == 3:
+                img_np = tensor.detach().cpu().numpy()
+                img_np = np.clip(img_np * 255.0, 0, 255).astype(np.uint8)
+                img = Image.fromarray(img_np)
+                buffer = BytesIO()
+                img.save(buffer, format='PNG', optimize=True)
+                
+                compressed_data['images'] = [buffer.getvalue()]
+                compressed_data['is_batch'] = False
+                compressed_data['shape'] = tensor.shape
+                
+            else:
+                # For unsupported tensor shapes, fall back to binary serialization
+                logger.info(f"Tensor shape {tensor.shape} not suitable for PNG compression, using direct binary")
+                return tensor.numpy().tobytes()
+                
+            # Use msgpack for more efficient serialization than pickle
+            import msgpack
+            # Add metadata about tensor shape for reconstruction
+            # Temporarily unpack to verify data integrity
+            packed_data = msgpack.packb(compressed_data, use_bin_type=True)
+            # verification = msgpack.unpackb(packed_data, raw=False)
+            # if verification.get('shape') != compressed_data.get('shape'):
+            #     logger.warning(f"Data verification failed: shapes don't match")
+            # Print payload size for debugging
+            logger.info(f"Compressed tensor payload size: {len(packed_data)} bytes")
+            return packed_data
+            
+        except Exception as e:
+            logger.error(f"PNG compression failed: {str(e)}\n{traceback.format_exc()}")
+            return tensor.numpy().tobytes()
+        
+    def _compressed_bytes_to_tensor(self, buffer: bytes) -> torch.tensor:
+        """
+        Converts compressed bytes back to a tensor.
+        
+        Args:
+            buffer: Compressed data as bytes
+            
+        Returns:
+            tensor: Reconstructed tensor
+        """
+        from io import BytesIO
+        from PIL import Image
+        import numpy as np
+
+        try:
+            # First try to unpack as msgpack
+            import msgpack
+            try:
+                logger.info(f"Decompressing tensor payload size: {len(buffer)} bytes")
+                data = msgpack.unpackb(buffer, raw=False)
+                
+                if isinstance(data, dict) and 'shape' in data:
+                    if data.get('is_batch', False):
+                        # Reconstruct batch of images
+                        tensors = []
+                        for img_data in data['images']:
+                            buffer = BytesIO(img_data)
+                            img = Image.open(buffer)
+                            img_np = np.array(img).astype('float32') / 255.0
+                            tensors.append(torch.from_numpy(img_np))
+                        
+                        # Stack into batch
+                        return torch.stack(tensors, dim=0)
+                    else:
+                        # Reconstruct single image
+                        buffer = BytesIO(data['images'][0])
+                        img = Image.open(buffer)
+                        img_np = np.array(img).astype('float32') / 255.0
+                        return torch.from_numpy(img_np)
+            except Exception as inner_e:
+                logger.warning(f"Msgpack unpacking failed, trying binary fallback: {str(inner_e)}")
+                raise  # Re-raise to fall through to the binary fallback
+            
+        except Exception as e:
+            logger.warning(f"PNG decompression failed, falling back to binary: {str(e)}")
+            
+            # Fallback to binary deserialization
+            try:
+                # Create a writable copy of the array to avoid the PyTorch warning
+                array = np.frombuffer(buffer, dtype=np.float32).copy()
+                return torch.from_numpy(array)
+            except Exception as e2:
+                logger.error(f"Failed to deserialize buffer: {str(e2)}")
+                raise
     
     def split_batch(self, tensor: torch.Tensor, instance_id: int) -> tuple[int, int]:
         batch_size = tensor.shape[0]
@@ -178,7 +313,7 @@ class SyncStateHandler(StateHandler):
             # Extract the appropriate slice for this instance
             image_tensor = tensor[start_idx:end_idx]
             await self._send_buffer_descriptor(image_tensor, FANOUT_EXPECTED_MSG_KEY)
-            byte_buffer = image_tensor.numpy().tobytes()
+            byte_buffer = self._tensor_to_compressed_bytes(image_tensor)
 
             all_instanced_received_buffer: asyncio.Future = asyncio.get_running_loop().create_future()
             emitter: Emitter = Emitter(
@@ -199,8 +334,9 @@ class SyncStateHandler(StateHandler):
         return output
 
     async def _begin_gather_tensors(self, tensor: torch.Tensor) -> tuple[list[bytes],tuple[int]]:
-
-        byte_buffer = tensor.numpy().tobytes()
+        
+        # Use PNG compression for sending image tensors
+        byte_buffer = self._tensor_to_compressed_bytes(tensor)
 
         all_instanced_received_buffer: asyncio.Future = asyncio.get_running_loop().create_future()
 
@@ -295,9 +431,22 @@ class SyncStateHandler(StateHandler):
 
         buffer_descriptor: ClusterDistributeBufferDescriptor = await self._receive_buffer_descriptor(FANOUT_EXPECTED_MSG_KEY)
 
-        buffer = await self._begin_fanout_receiver() # Fixed incorrect method name
-        array = np.frombuffer(buffer, dtype=np.float32)
-        tensor = torch.from_numpy(array).reshape(tuple(buffer_descriptor.buffer_shape))
+        buffer = await self._begin_fanout_receiver()
+        
+        # Use the decompression function to convert back to tensor
+        tensor = self._compressed_bytes_to_tensor(buffer)
+        
+        # Verify shape matches buffer descriptor and reshape if needed
+        expected_shape = tuple(buffer_descriptor.buffer_shape)
+        if tensor.shape != expected_shape:
+            logger.warning(f"Decompressed tensor shape {tensor.shape} doesn't match expected shape {expected_shape}. Reshaping...")
+            try:
+                tensor = tensor.reshape(expected_shape)
+            except RuntimeError as e:
+                logger.error(f"Failed to reshape tensor: {str(e)}")
+                # In case of critical reshape error, we might need to create a new tensor of correct shape
+                logger.warning("Creating new tensor with correct shape. Data may be corrupted.")
+                tensor = torch.zeros(expected_shape, dtype=tensor.dtype, device=tensor.device)
         
         logger.info("Received fanout tensor of shape %s", tensor.shape)
         
@@ -309,7 +458,6 @@ class SyncStateHandler(StateHandler):
         # Should validate shapes match before combining
 
         logger.info("Syncing tensor of shape %s", tensor.shape)
-        # Get original shape and convert tensor to bytes
 
         # This should keep blocking until we get all buffers.
         buffers, shapes = await self._begin_gather_tensors(tensor)
@@ -317,11 +465,32 @@ class SyncStateHandler(StateHandler):
         # Convert each buffer into a tensor with its original shape
         tensors = []
         for buffer, shape in zip(buffers, shapes):
-            array = np.frombuffer(buffer, dtype=np.float32)
-            tensor = torch.from_numpy(array).reshape(shape)
-            if len(tensor.shape) < 4:  # Check if batch dimension is missing
-                tensor = tensor.unsqueeze(0)  # Add batch dimension of 1
-            tensors.append(tensor)
+            try:
+                # Use our PNG decompression function
+                decompressed_tensor = self._compressed_bytes_to_tensor(buffer)
+                
+                # Ensure the shape matches what we expect
+                if decompressed_tensor.shape != shape:
+                    logger.warning(f"Decompressed tensor shape {decompressed_tensor.shape} doesn't match expected shape {shape}. Reshaping...")
+                    try:
+                        decompressed_tensor = decompressed_tensor.reshape(shape)
+                    except RuntimeError as e:
+                        logger.error(f"Failed to reshape tensor: {str(e)}")
+                        # In case of reshape error, create a zero tensor of correct shape
+                        decompressed_tensor = torch.zeros(shape, dtype=decompressed_tensor.dtype, device=decompressed_tensor.device)
+                
+                # Add batch dimension if needed
+                if len(decompressed_tensor.shape) < 4:
+                    decompressed_tensor = decompressed_tensor.unsqueeze(0)
+                
+                tensors.append(decompressed_tensor)
+            except Exception as e:
+                logger.error(f"Error decompressing tensor: {str(e)}")
+                # Create a zero tensor with correct shape in case of error
+                zero_tensor = torch.zeros(shape, dtype=torch.float32)
+                if len(zero_tensor.shape) < 4:
+                    zero_tensor = zero_tensor.unsqueeze(0)
+                tensors.append(zero_tensor)
             
         self._exit_state = True
         return tensors

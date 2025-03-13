@@ -109,7 +109,7 @@ class UDPSingleton:
             
             packet_count += 1
             if packet_count >= step_packet_count + 1000:
-                logger.info(f"Processed {packet_count} incoming packets")
+                # logger.info(f"Processed {packet_count} incoming packets")
                 step_packet_count = packet_count
 
         logger.info("Exited incoming thread.")

@@ -172,6 +172,6 @@ class Receiver(SyncHandler):
                 self._chunks_bitfield[chunk_id] = True
 
                 # Check progress less frequently
-                if chunk_id % 1000 == 0 or (chunk_id == len(self._expected_chunk_ids) - 1):
+                if chunk_id % 5000 == 0 or (chunk_id == len(self._expected_chunk_ids) - 1):
                     total_chunks, expected_total = self._buffer_progress()
-                    logger.debug(f"Received chunk {chunk_id} from instance {sender_instance_id}. Total: {total_chunks}/{expected_total}")
+                    logger.info(f"Received chunk {chunk_id} from instance {sender_instance_id}. Total: {total_chunks}/{expected_total}")

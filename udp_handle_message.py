@@ -456,7 +456,7 @@ class UDPMessageHandler(UDPBase):
     def _log_outgoing_queue_size(self):
         outgoing_queue_size = self._outgoing_queue.qsize()
         # if outgoing_queue_size % 100 == 0:
-        logger.info('Outgoing message queue size: %s', outgoing_queue_size)
+        logger.debug('Outgoing message queue size: %s', outgoing_queue_size)
 
     def _queue_outgoing_to_broadcast(self, packet):
         queued_msg = OutgoingPacket(packet)
