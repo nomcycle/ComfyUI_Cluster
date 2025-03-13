@@ -106,7 +106,7 @@ class Receiver(SyncHandler):
             time_since_last_packet = self._udp_buffer_handler.get_time_since_last_packet()
             time_since_last_poll = current_time - self._time_since_polling_chunk_progress
 
-            if incoming_queue_size == 0 or time_since_last_packet < 0.1 or time_since_last_poll < 0.1:
+            if incoming_queue_size == 0 or time_since_last_packet < 0.025 or time_since_last_poll < 0.025:
                 return await asyncio.sleep(0.001)
 
             self._time_since_polling_chunk_progress = current_time
