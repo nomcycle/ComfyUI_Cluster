@@ -31,6 +31,9 @@ NODE_CLASS_MAPPINGS = {
     "ClusterFanOutMask": nodes.ClusterFanOutMask,
     "ClusterBroadcastTensor": nodes.ClusterBroadcastTensor,
     "ClusterListenTensorBroadcast": nodes.ClusterListenTensorBroadcast,
+    "ClusterFlattenBatchedImageList": nodes.ClusterFlattenBatchedImageList,
+    "ClusterSplitBatchToList": nodes.ClusterSplitBatchToList,
+    "ClusterStridedReorder": nodes.ClusterStridedReorder,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -47,7 +50,10 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ClusterExecuteCurrentWorkflow": "Execute Current Workflow",
     "ClusterBroadcastTensor": "Broadcast Tensor",
     "ClusterBroadcastLoadedImage": "Broadcast Loaded Image",
-    "ClusterListenTensorBroadcast": "Listen Tensor Broadcast"
+    "ClusterListenTensorBroadcast": "Listen Tensor Broadcast",
+    "ClusterFlattenBatchedImageList": "Flatten Batched Image List",
+    "ClusterSplitBatchToList": "Split Batch To List",
+    "ClusterStridedReorder": "Strided Reorder Images"
 }
 
 WEB_DIRECTORY = "./js"

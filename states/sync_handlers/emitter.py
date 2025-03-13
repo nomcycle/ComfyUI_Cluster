@@ -63,6 +63,8 @@ class Emitter(SyncHandler):
         }
 
         self._instance_chunk_bitfields: Dict[int, np.ndarray] = {}
+        self._accumulated_missing_chunks = np.array([], dtype=np.bool_)
+
         self._expected_chunk_ids: Dict[int, list] = {}
         self._received_acks: set = set()
 
@@ -95,11 +97,38 @@ class Emitter(SyncHandler):
             if incoming_message.msg_type == ClusterMessageType.DISTRIBUTE_BUFFER_RESEND:
                 if self._instance_states.get(incoming_message.sender_instance_id) != OtherInstanceState.COMPLETE_BUFFER:
                     resend_msg = ParseDict(incoming_message.message, ClusterDistributeBufferResend())
+
+                     # Get the window information
+                    window_start = resend_msg.window_start
+                    window_size = resend_msg.window_size
+                    window_end = window_start + window_size
+                    
+                    # Unpack the bitfield
                     missing_bits = np.unpackbits(np.frombuffer(resend_msg.missing_chunk_ids, dtype=np.uint8)).astype(bool)
+                    
+                    # Ensure the unpacked bits match the expected window size
+                    missing_bits = missing_bits[:window_size]
+                    
+                    # Initialize the full bitfield if it doesn't exist
                     expected_length = len(self._expected_chunk_ids.get(EnvVars.get_instance_index(), []))
-                    missing_bits = missing_bits[:expected_length]
-                    logger.debug("Received resend request for %d chunks", len(np.nonzero(missing_bits)[0]))
-                    self._instance_chunk_bitfields[incoming_message.sender_instance_id] = ~missing_bits
+                    if incoming_message.sender_instance_id not in self._instance_chunk_bitfields:
+                        self._instance_chunk_bitfields[incoming_message.sender_instance_id] = np.ones(expected_length, dtype=bool)
+                    
+                    # Update the instance's bitfield for the window - mark missing chunks
+                    instance_chunk_bitfield = self._instance_chunk_bitfields[incoming_message.sender_instance_id]
+                    # Set to 0 where missing_bits is 1 (chunk is missing)
+                    instance_chunk_bitfield[window_start:window_end] = ~missing_bits
+                    
+                    # Initialize accumulated missing chunks if needed
+                    if len(self._accumulated_missing_chunks) == 0:
+                        self._accumulated_missing_chunks = np.zeros(expected_length, dtype=bool)
+                    
+                    # Update accumulated missing chunks for this window
+                    self._accumulated_missing_chunks[window_start:window_end] |= missing_bits
+                    
+                    # logger.debug(f"Updated missing chunks for instance {incoming_message.sender_instance_id}, " 
+                    #             f"window {window_start}-{window_end-1}, "
+                    #             f"accumulated size: {len(self._accumulated_missing_chunks)}")
                     self._instance_states[incoming_message.sender_instance_id] = OtherInstanceState.REQUESTED_RESEND
 
             if incoming_message.msg_type == ClusterMessageType.DISTRIBUTE_BUFFER_ACK:
@@ -174,16 +203,11 @@ class Emitter(SyncHandler):
         if not acked_instances:
             return
 
-        # Create a combined bitfield of all acked chunks
-        chunk_count = len(self._this_instance_dependency_chunks)
-        all_instance_missing_chunks = np.zeros(chunk_count, dtype=np.bool_)
-        
-        # For each instance that has acked, OR their ack bitfield
-        for instance_index in acked_instances:
-            all_instance_missing_chunks |= ~self._instance_chunk_bitfields[instance_index]
-
         # Find indices where chunks haven't been acked
-        missing_chunks = np.nonzero(all_instance_missing_chunks)[0]
+        if len(self._accumulated_missing_chunks) == 0:
+            return
+
+        missing_chunks = np.nonzero(self._accumulated_missing_chunks)[0]
         
         if missing_chunks.size > 0:
             logger.debug(f"Resending {len(missing_chunks)} chunks that weren't acked by all instances")
@@ -194,6 +218,9 @@ class Emitter(SyncHandler):
                 chunk_id_bytes = int(chunk_id).to_bytes(4, byteorder='big')
                 chunk_data = self._this_instance_dependency_chunks[chunk_id]
                 self._emit_byte_chunk(buffer_flag, instance_id_bytes, chunk_id_bytes, chunk_data)
+
+            # Assume that all chunks are received (they all won't be, but reciever will remind us :) )
+            self._accumulated_missing_chunks[missing_chunks] = False
 
     def _emit_byte_chunk(self, buffer_flag: bytes, sender_instance_id_bytes: bytes, chunk_id_bytes: bytes, chunk_data: bytes, to_instance_id: int | None = None):
         chunk_with_id = buffer_flag + sender_instance_id_bytes + chunk_id_bytes + chunk_data

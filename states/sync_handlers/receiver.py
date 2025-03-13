@@ -22,6 +22,8 @@ from ...protobuf.messages_pb2 import (
     ClusterDistributeBufferResend
 )
 
+BUFFER_RESEND_MAX_REQUEST_SIZE = 1024 # bytes
+
 class BufferBeginEvent:
     def __init__(self, sender_instance_id: int, buffer_type: int, chunk_count: int):
         self._sender_instance_id = sender_instance_id
@@ -104,7 +106,7 @@ class Receiver(SyncHandler):
             time_since_last_packet = self._udp_buffer_handler.get_time_since_last_packet()
             time_since_last_poll = current_time - self._time_since_polling_chunk_progress
 
-            if incoming_queue_size == 0 or time_since_last_packet < 1 or time_since_last_poll < 1:
+            if incoming_queue_size == 0 or time_since_last_packet < 0.1 or time_since_last_poll < 0.1:
                 return await asyncio.sleep(0.001)
 
             self._time_since_polling_chunk_progress = current_time
@@ -113,16 +115,28 @@ class Receiver(SyncHandler):
             logger.debug(f"Instance {EnvVars.get_instance_index()}: Have {total_chunks}/{expected_total} chunks")
             if expected_total > 0:
                 if total_chunks < expected_total:
-                    # Create expected bitfield of 1s up to expected_total
-                    expected_bitfield = np.ones(expected_total, dtype=np.bool_)
+
+                    first_missing_index = np.argmin(self._chunks_bitfield)
                     
-                    missing_bitfield = ~self._chunks_bitfield & expected_bitfield
-                    missing_bytes = np.packbits(missing_bitfield).tobytes()
+                    # Calculate the end index (don't go past the end of the array)
+                    end_index = min(first_missing_index + BUFFER_RESEND_MAX_REQUEST_SIZE * 8, len(self._chunks_bitfield))
+                    
+                    # Extract the window of missing chunks
+                    window_bitfield = ~self._chunks_bitfield[first_missing_index:end_index]
+                    # Log the window size we are requesting
+                    window_size = end_index - first_missing_index
+                    window_bytes = np.packbits(window_bitfield).tobytes()
+                    logger.debug(f"Requesting resend for window size: {window_size} starting at index {first_missing_index}, byte length: {len(window_bytes)}")
+                    
+                    # Create and send the resend request
                     message = ClusterDistributeBufferResend()
                     message.header.type = ClusterMessageType.DISTRIBUTE_BUFFER_RESEND
                     message.header.require_ack = True
                     message.instance_index = EnvVars.get_instance_index()
-                    message.missing_chunk_ids = missing_bytes
+                    message.missing_chunk_ids = window_bytes
+                    message.window_start = first_missing_index
+                    message.window_size = end_index - first_missing_index
+
                     await self._udp_message_handler.send_and_wait(message, self._sender_instance_id)
 
                 else:

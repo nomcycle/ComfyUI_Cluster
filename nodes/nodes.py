@@ -4,6 +4,7 @@ import traceback
 import json
 import os
 from abc import abstractmethod
+import comfy.utils
 
 from server import PromptServer
 prompt_queue = PromptServer.instance.prompt_queue
@@ -165,10 +166,14 @@ class ClusterTensorNodeBase(SyncedNode):
     def get_input(self, input) -> torch.Tensor:
         return input
 
-    def blocking_sync(self, input):
+    def _prepare_loop(self) -> tuple[asyncio.AbstractEventLoop, InstanceLoop]:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         instance: InstanceLoop = get_instance_loop()
+        return loop, instance
+
+    def blocking_sync(self, input):
+        loop, instance = self._prepare_loop()
         return loop.run_until_complete(self._sync_operation(instance, input))
 
     @abstractmethod
@@ -187,14 +192,30 @@ class ClusterTensorNodeBase(SyncedNode):
         return (output,)
 
 class ClusterListenTensorBroadcast(ClusterTensorNodeBase):
-    INPUT_TYPE = "IMAGE"
     RETURN_TYPES = ("IMAGE",)
 
-    def get_input(self, input):
-        return input
+    @classmethod
+    def IS_CHANGED(cls) -> float:
+        return float('nan')
 
-    def _sync_operation(self, instance, input):
+    @classmethod
+    def INPUT_TYPES(s):
+        return {}
+
+    def blocking_sync(self):
+        loop, instance = self._prepare_loop()
+        return loop.run_until_complete(self._sync_operation(instance))
+
+    def _sync_operation(self, instance):
         return instance._this_instance.receive_tensor_fanout()
+
+    def execute(self):
+        try:
+            output = self.blocking_sync()
+            return self._prepare_output(output)
+        except Exception as e:
+            logger.error("Error executing tensor operation: %s\n%s", str(e), traceback.format_exc())
+            raise e
 
 class ClusterBroadcastTensor(ClusterTensorNodeBase):
     INPUT_TYPE = "IMAGE"
@@ -302,6 +323,112 @@ class ClusterFanOutLatent(ClusterLatentNodeMixin, ClusterFanOutBase):
 
 class ClusterFanOutMask(ClusterMaskNodeMixin, ClusterFanOutBase):
     pass
+
+# Batch list flattening node
+class ClusterFlattenBatchedImageList(SyncedNode):
+    @classmethod
+    def INPUT_TYPES(s):
+        return {"required": {
+            "images": ("IMAGE",),
+        }}
+
+    INPUT_IS_LIST = True
+    RETURN_TYPES = ("IMAGE",)
+    OUTPUT_IS_LIST = (True,)
+    FUNCTION = "execute"
+    CATEGORY = "Cluster/Image"
+
+    def execute(self, images):
+        # Flatten a list of batches into a list of individual images
+        flattened_images = []
+        for batch in images:
+            for i in range(batch.shape[0]):
+                flattened_images.append(batch[i:i+1])
+        
+        return (flattened_images,)
+
+class ClusterSplitBatchToList(SyncedNode):
+    @classmethod
+    def INPUT_TYPES(s):
+        return {"required": {
+            "image": ("IMAGE",),
+            "batches_per_list_element": ("INT", {"default": 2, "min": 1, "max": 64}),
+        }}
+
+    RETURN_TYPES = ("IMAGE",)
+    OUTPUT_IS_LIST = (True,)
+    FUNCTION = "execute"
+    CATEGORY = "Cluster/Image"
+
+    def execute(self, image, batches_per_list_element):
+        batch_size = image.shape[0]
+        
+        # Handle edge case: if batch size is smaller than num_batches
+        if batch_size < batches_per_list_element:
+            # Return individual images as separate batches
+            return ([image[i:i+1] for i in range(batch_size)],)
+        
+        # Calculate base size for each batch
+        base_size = batch_size // batches_per_list_element
+        remainder = batch_size % batches_per_list_element
+        
+        result = []
+        start_idx = 0
+        
+        for i in range(batches_per_list_element):
+            # Add one extra item to earlier batches if there's a remainder
+            curr_size = base_size + (1 if i < remainder else 0)
+            if curr_size > 0:  # Only add non-empty batches
+                result.append(image[start_idx:start_idx + curr_size])
+                start_idx += curr_size
+        
+        return (result,)
+
+class ClusterStridedReorder(SyncedNode):
+    @classmethod
+    def INPUT_TYPES(s):
+        return {"required": {
+            "image": ("IMAGE",),
+            "stride": ("INT", {"default": 2, "min": 1, "max": 128}),
+            "length": ("INT", {"default": 0, "min": 0, "max": 1024}),
+        }}
+
+    RETURN_TYPES = ("IMAGE",)
+    FUNCTION = "execute"
+    CATEGORY = "Cluster/Image"
+
+    def execute(self, image, stride, length):
+        batch_size = image.shape[0]
+        
+        # Handle edge cases
+        if batch_size <= 1 or stride <= 1:
+            return (image,)
+        
+        # If length is 0 or exceeds batch size, use the entire batch
+        if length <= 0 or length > batch_size:
+            length = batch_size
+            
+        # Original indices
+        indices = list(range(batch_size))
+        new_order = []
+        
+        # Calculate how many complete stride groups we have within the specified length
+        num_groups = (length + stride - 1) // stride  # Ceiling division
+        
+        # Apply strided reordering pattern:
+        # For each position within the stride, collect all elements at that position
+        for pos in range(stride):
+            # Get indices at position pos, pos+stride, pos+2*stride, etc. up to length
+            group_indices = indices[pos:length:stride]
+            new_order.extend(group_indices)
+            
+        # Add any remaining indices not included in the strided portion
+        if length < batch_size:
+            new_order.extend(indices[length:])
+            
+        # Reorder the batch according to the pattern
+        reordered_images = torch.stack([image[idx] for idx in new_order], dim=0)
+        return (reordered_images,)
 
 # List of receiver nodes such that we can invalidate 
 # their cached outputs when re-running prompts.

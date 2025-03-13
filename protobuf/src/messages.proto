@@ -95,6 +95,8 @@ message ClusterDistributeBufferResend {
     ClusterMessageHeader header = 1;
     int32 instance_index = 2;
     bytes missing_chunk_ids = 3;
+    int32 window_start = 4;
+    int32 window_size = 5;
 }
 
 message ClusterDistributeBufferDescriptor {
