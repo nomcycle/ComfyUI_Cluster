@@ -23,6 +23,7 @@ NODE_CLASS_MAPPINGS = {
     "ClusterGetInstanceWorkItemFromBatch": nodes.ClusterGetInstanceWorkItemFromBatch,
     "ClusterExecuteCurrentWorkflow": nodes.ClusterExecuteCurrentWorkflow,
     "ClusterBroadcastLoadedImage": nodes.ClusterBroadcastLoadedImage,
+    "ClusterFanInImages": nodes.ClusterFanInImages,
     "ClusterGatherImages": nodes.ClusterGatherImages,
     "ClusterGatherLatents": nodes.ClusterGatherLatents,
     "ClusterGatherMasks": nodes.ClusterGatherMasks,
@@ -34,11 +35,14 @@ NODE_CLASS_MAPPINGS = {
     "ClusterFlattenBatchedImageList": nodes.ClusterFlattenBatchedImageList,
     "ClusterSplitBatchToList": nodes.ClusterSplitBatchToList,
     "ClusterStridedReorder": nodes.ClusterStridedReorder,
+    "ClusterFinallyFree": nodes.ClusterFinallyFree,
+    "ClusterFreeNow": nodes.ClusterFreeNow
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "ClusterInfo": "Cluster Info",
     "ClusterGetInstanceWorkItemFromBatch": "Get Instance Work Item From Batch",
+    "ClusterFanInImages": "Fan-in Images",
     "ClusterGatherImages": "Gather Images",
     "ClusterGatherLatents": "Gather Latents", 
     "ClusterGatherMasks": "Gather Masks",
@@ -53,7 +57,9 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ClusterListenTensorBroadcast": "Listen Tensor Broadcast",
     "ClusterFlattenBatchedImageList": "Flatten Batched Image List",
     "ClusterSplitBatchToList": "Split Batch To List",
-    "ClusterStridedReorder": "Strided Reorder Images"
+    "ClusterStridedReorder": "Strided Reorder Images",
+    "ClusterFinallyFree": "Finally Free",
+    "ClusterFreeNow": "Free Now"
 }
 
 WEB_DIRECTORY = "./js"

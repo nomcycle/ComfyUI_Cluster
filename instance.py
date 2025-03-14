@@ -96,6 +96,14 @@ class ThisInstance(Instance):
         # sync_state_handler = await self._setup_sync_state()
         return await self._current_state_handler.begin_tensor_broadcast(tensor)
 
+    async def send_tensor_to_leader(self, tensor):
+        # sync_state_handler = await self._setup_sync_state()
+        return await self._current_state_handler.begin_sender(tensor, [0])
+
+    async def receive_tensor_fanin(self, tensor):
+        # sync_state_handler = await self._setup_sync_state()
+        return await self._current_state_handler.begin_fanin_receiver(tensor)
+
     async def fanout_tensor(self, tensor):
         # sync_state_handler = await self._setup_sync_state()
         return await self._current_state_handler.begin_fanout_emitter(tensor)

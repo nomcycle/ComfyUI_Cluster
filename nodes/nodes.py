@@ -3,15 +3,22 @@ import asyncio
 import traceback
 import json
 import os
+import gc
+
 from abc import abstractmethod
-import comfy.utils
 
 from server import PromptServer
+import comfy.model_management as model_management
 prompt_queue = PromptServer.instance.prompt_queue
+            
 
 from ..instance_loop import InstanceLoop, get_instance_loop
 from ..env_vars import EnvVars
 from ..log import logger
+
+class Anything(str):
+    def __ne__(self, _):
+        return False
 
 class SyncedNode:
 
@@ -37,6 +44,78 @@ class ClusterInfo(SyncedNode):
 
     def execute(self):
         return (EnvVars.get_instance_index(), EnvVars.get_instance_count(),)
+
+class ClusterFinallyFree(SyncedNode):
+    def __init__(self):
+        super().__init__()
+
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "anything": (Anything(),),
+                "unload_models": ("BOOLEAN", {"default": True}),
+                "free_memory": ("BOOLEAN", {"default": True}),
+            }
+        }
+
+    RETURN_TYPES = ()
+    OUTPUT_NODE = True
+    FUNCTION = "execute"
+    CATEGORY = "Cluster"
+
+    def execute(self, anything, unload_models, free_memory):
+        try:
+            if hasattr(prompt_queue, "set_flag"):
+                if unload_models:
+                    prompt_queue.set_flag("unload_models", unload_models)
+                    logger.info(f"Set flag to unload models")
+                
+                if free_memory:
+                    prompt_queue.set_flag("free_memory", free_memory)
+                    logger.info(f"Set flag to free memory and reset execution cache")
+
+            return ()
+        except Exception as e:
+            logger.error(f"Error freeing memory: {str(e)}")
+            logger.error(traceback.format_exc())
+            return ()
+
+class ClusterFreeNow(SyncedNode):
+    def __init__(self):
+        super().__init__()
+
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "anything": (Anything(),),
+                "unload_models": ("BOOLEAN", {"default": True}),
+                "free_memory": ("BOOLEAN", {"default": True}),
+            }
+        }
+
+    RETURN_TYPES = (Anything(),)
+    OUTPUT_NODE = True
+    FUNCTION = "execute"
+    CATEGORY = "Cluster"
+
+    def execute(self, anything, unload_models, free_memory):
+        try:
+            if unload_models:
+                logger.info(f"Immediately unloading models")
+                model_management.unload_all_models()
+                
+            if free_memory:
+                logger.info(f"Immediately freeing memory cache.")
+                model_management.soft_empty_cache()
+                torch.cuda.empty_cache()
+                gc.collect()
+            return (anything,)
+        except Exception as e:
+            logger.error(f"Error freeing memory: {str(e)}")
+            logger.error(traceback.format_exc())
+            return (anything,)
 
 class ClusterGetInstanceWorkItemFromBatch(SyncedNode):
     def __init__(self):
@@ -268,6 +347,15 @@ class ClusterBroadcastLoadedImage(ClusterBroadcastTensor):
             return instance._this_instance.broadcast_tensor(input)
         return instance._this_instance.receive_tensor_fanout()
 
+class ClusterFanInBase(ClusterTensorNodeBase):
+    INPUT_TYPE = "IMAGE"
+    RETURN_TYPES = ("IMAGE",)
+
+    def _sync_operation(self, instance, input):
+        if EnvVars.get_instance_index() == 0:
+            return instance._this_instance.receive_tensor_fanin(input)
+        return instance._this_instance.send_tensor_to_leader(input)
+
 class ClusterGatherBase(ClusterTensorNodeBase):
     OUTPUT_IS_LIST = (True,)
     RETURN_TYPES = ("IMAGE",)
@@ -305,6 +393,9 @@ class ClusterMaskNodeMixin:
     
     def get_input(self, input) -> torch.Tensor:
         return input[0]
+
+class ClusterFanInImages(ClusterImageNodeMixin, ClusterFanInBase):
+    pass
 
 class ClusterGatherImages(ClusterImageNodeMixin, ClusterGatherBase):
     pass

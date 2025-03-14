@@ -32,7 +32,7 @@ from .sync_handlers.receiver import Receiver
 
 from .sync_handlers.sync_handler import SyncHandler
 
-from ..expected_msg import FANOUT_EXPECTED_MSG_KEY, GATHER_EXPECTED_MSG_KEY
+from ..expected_msg import FANIN_EXPECTED_MSG_KEY, FANOUT_EXPECTED_MSG_KEY, GATHER_EXPECTED_MSG_KEY
 
 class SyncStateHandler(StateHandler):
     def __init__(self, instance: ThisInstance):
@@ -105,7 +105,7 @@ class SyncStateHandler(StateHandler):
         self._buffer_handler_callback = handle_buffer_callback
         self._state_handler_callback = tick_callback
 
-    async def _begin_fanout_receiver(self) -> list[bytes]:
+    async def _receive(self) -> list[bytes]:
         completed_buffer: asyncio.Future = asyncio.get_running_loop().create_future()
         receiver: Receiver = Receiver(
             self._instance.cluster.udp_message_handler,
@@ -122,9 +122,9 @@ class SyncStateHandler(StateHandler):
 
         return result.get_buffer()
 
-    async def _begin_buffer_broadcast(self, tensor: torch.tensor):
+    async def _begin_buffer_sender(self, tensor: torch.tensor, expected_msg_key: int, to_instance_ids: list[int] | None = None):
         all_instanced_received_buffer: asyncio.Future = asyncio.get_running_loop().create_future()
-        await self._send_buffer_descriptor(tensor, FANOUT_EXPECTED_MSG_KEY)
+        await self._send_buffer_descriptor(tensor, expected_msg_key)
         
         # Use lossless PNG compression for sending image tensors
         byte_buffer = self._tensor_to_compressed_bytes(tensor)
@@ -134,7 +134,8 @@ class SyncStateHandler(StateHandler):
             self._instance.cluster.udp_buffer_handler,
             asyncio.get_running_loop(),
             all_instanced_received_buffer,
-            byte_buffer)
+            byte_buffer,
+            to_instance_ids)
 
         self._register_delegates(emitter.handle_message, None, emitter.tick)
 
@@ -398,7 +399,7 @@ class SyncStateHandler(StateHandler):
 
     async def begin_tensor_broadcast(self, tensor: torch.Tensor):
         logger.info("Distributing tensor of shape %s", tensor.shape)
-        return await self._begin_buffer_broadcast(tensor)
+        return await self._begin_buffer_sender(tensor, FANOUT_EXPECTED_MSG_KEY)
     
     async def _send_buffer_descriptor(self, tensor: torch.Tensor, expected_key: int):
         message = ClusterDistributeBufferDescriptor()
@@ -427,11 +428,11 @@ class SyncStateHandler(StateHandler):
         self._exit_state = True
         return output
 
-    async def begin_fanout_receiver(self) -> torch.Tensor:
+    async def begin_receiver(self, expected_msg_key: int) -> torch.Tensor:
 
-        buffer_descriptor: ClusterDistributeBufferDescriptor = await self._receive_buffer_descriptor(FANOUT_EXPECTED_MSG_KEY)
+        buffer_descriptor: ClusterDistributeBufferDescriptor = await self._receive_buffer_descriptor(expected_msg_key)
 
-        buffer = await self._begin_fanout_receiver()
+        buffer = await self._receive()
         
         # Use the decompression function to convert back to tensor
         tensor = self._compressed_bytes_to_tensor(buffer)
@@ -452,6 +453,16 @@ class SyncStateHandler(StateHandler):
         
         self._exit_state = True
         return tensor
+
+    async def begin_fanin_receiver(self, tensor: torch.Tensor) -> torch.Tensor:
+        received_tensor = await self.begin_receiver(FANIN_EXPECTED_MSG_KEY)
+        return torch.cat([tensor, received_tensor], dim=0)
+
+    async def begin_fanout_receiver(self) -> torch.Tensor:
+        return await self.begin_receiver(FANOUT_EXPECTED_MSG_KEY)
+
+    async def begin_sender(self, tensor: torch.Tensor, to_instance_ids: list[int] | None = None) -> torch.Tensor:
+        return await self._begin_buffer_sender(tensor, FANIN_EXPECTED_MSG_KEY, to_instance_ids)
 
     async def begin_gathering_tensors(self, tensor: torch.Tensor) -> torch.Tensor:
         # TODO: Current implementation assumes all tensors have same shape
