@@ -1,179 +1,47 @@
 // Container Node implementation for ComfyUI
 import { app } from "../../../scripts/app.js";
+import { 
+    GraphTraversal,
+    TraversalDirection,
+    findNodeOfType,
+    findConnectedNodes
+} from "./graph_traversal.js";
 
 // Register node for the SimpleVisualNode Python class
 app.registerExtension({
     name: "ComfyUI.Cluster.ClusterFanOutImage",
-    
+
     async beforeRegisterNodeDef(nodeType, nodeData, app) {
         // Only apply to our specific node
         if (nodeData.name !== "ClusterFanOutImage") {
             return;
         }
-
-        // Direction enum for graph traversal
-        const TraversalDirection = {
-            BOTH: 0,
-            OUTPUTS: 1,
-            INPUTS: 2
-        };
         
-        // Function to find the corresponding FanIn node connected to this FanOut node
+        // Specific convenience methods for this node type
         function findFanInNode(fanOutNode) {
-            return traverseFromNode(fanOutNode, "ClusterFanInImages");
-        }
-
-        // Generic function to traverse the graph from a starting node
-        // looking for a specific node type
-        function traverseFromNode(startNode, targetNodeType, callback) {
-            return traverseGraph(startNode, targetNodeType, TraversalDirection.BOTH, callback);
-        }
-        
-        // Traverse through outputs only
-        function traverseOutputsFromNode(startNode, targetNodeType, callback) {
-            return traverseGraph(startNode, targetNodeType, TraversalDirection.OUTPUTS, callback);
-        }
-        
-        // Traverse through inputs only
-        function traverseInputsFromNode(startNode, targetNodeType, callback) {
-            return traverseGraph(startNode, targetNodeType, TraversalDirection.INPUTS, callback);
-        }
-        
-        // Core traversal function that can be configured for direction
-        function traverseGraph(startNode, targetNodeType, direction, callback) {
-            // Set to track visited nodes to avoid cycles
-            const visited = new Set();
-            visited.add(startNode.id);
-            
-            // Queue for BFS traversal
-            const queue = [];
-            
-            // Initialize queue with direct connections from start node
-            if (direction === TraversalDirection.BOTH || direction === TraversalDirection.OUTPUTS) {
-                addOutputConnections(startNode, visited, queue);
-            }
-            
-            if (direction === TraversalDirection.BOTH || direction === TraversalDirection.INPUTS) {
-                addInputConnections(startNode, visited, queue);
-            }
-            
-            // Perform BFS to find target node
-            while (queue.length > 0) {
-                const currentNode = queue.shift();
-                
-                // Check if this is the target node type we're looking for
-                if (currentNode.type === targetNodeType) {
-                    return currentNode;
-                }
-                
-                // Continue traversing through this node's connections
-                if (direction === TraversalDirection.BOTH || direction === TraversalDirection.OUTPUTS) {
-                    addOutputConnections(currentNode, visited, queue);
-                }
-                
-                if (direction === TraversalDirection.BOTH || direction === TraversalDirection.INPUTS) {
-                    addInputConnections(currentNode, visited, queue);
-                }
-                
-                if (callback && typeof callback === 'function') {
-                    callback(currentNode);
-                }
-            }
-            
-            return null;
-        }
-
-        // LinkType enum for identifying connection endpoints
-        const LinkType = {
-            TARGET: 'target_id',
-            ORIGIN: 'origin_id'
-        };
-
-        // Helper function to add connected nodes to the traversal queue
-        function addConnectedNodesToQueue(node, visited, queue) {
-            // Process output connections
-            addOutputConnections(node, visited, queue);
-            
-            // Process input connections
-            addInputConnections(node, visited, queue);
-        }
-        
-        // Helper function to add nodes connected via outputs to the queue
-        function addOutputConnections(node, visited, queue) {
-            if (!node.outputs) return;
-            
-            for (const output of node.outputs) {
-                if (!output.links) continue;
-                
-                for (const linkId of output.links) {
-                    addNodeFromLink(node, linkId, LinkType.TARGET, visited, queue);
-                }
-            }
-        }
-        
-        // Helper function to add nodes connected via inputs to the queue
-        function addInputConnections(node, visited, queue) {
-            if (!node.inputs) return;
-            
-            for (const input of node.inputs) {
-                if (!input.link) continue;
-                
-                addNodeFromLink(node, input.link, LinkType.ORIGIN, visited, queue);
-            }
-        }
-        
-        // Common function to add a node from a link
-        function addNodeFromLink(node, linkId, idType, visited, queue) {
-            const link = node.graph.links[linkId];
-            if (!link) return;
-            
-            const connectedNodeId = link[idType];
-            const connectedNode = node.graph.getNodeById(connectedNodeId);
-            
-            if (connectedNode && !visited.has(connectedNode.id)) {
-                visited.add(connectedNode.id);
-                queue.push(connectedNode);
-            }
+            return findNodeOfType(fanOutNode, "ClusterFanInImages");
         }
         
         function findInterconnectedNodes(fanOutNode, fanInNode) {
-            const interconnectedNodes = new Set();
-            const visited = new Set();
-            const queue = [fanInNode];
-            visited.add(fanInNode.id);
-            
-            while (queue.length > 0) {
-                const currentNode = queue.shift();
-                
-                // Don't include the fanOutNode in our results, but stop traversal when we reach it
-                if (currentNode.id === fanOutNode.id) {
-                    continue;
-                }
-                
-                // Add current node to our result set
-                interconnectedNodes.add(currentNode.id);
-                
-                // Only traverse inputs (backwards traversal)
-                if (currentNode.inputs) {
-                    for (const input of currentNode.inputs) {
-                        if (!input.link) continue;
-                        
-                        const link = currentNode.graph.links[input.link];
-                        if (!link) continue;
-                        
-                        const originNodeId = link[LinkType.ORIGIN];
-                        const originNode = currentNode.graph.getNodeById(originNodeId);
-                        
-                        if (originNode && !visited.has(originNode.id)) {
-                            visited.add(originNode.id);
-                            queue.push(originNode);
-                        }
-                    }
-                }
-            }
-            
-            return Array.from(interconnectedNodes).map(id => fanInNode.graph.getNodeById(id));
+            return findConnectedNodes(fanInNode, fanOutNode, TraversalDirection.INPUTS);
         }
+
+        nodeType.prototype.onExecute = function() {
+            prompt = app.graphToPrompt();
+            fetch('/cluster/queue', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(prompt)
+            }).then(response => {
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+            }).catch(error => {
+                console.error("Error executing cluster node:", error);
+            });
+        };
 
         // Override the node constructor to add custom behavior
         const onNodeCreated = nodeType.prototype.onNodeCreated;
@@ -183,9 +51,9 @@ app.registerExtension({
             // Create container properties
             this.container = {
                 nodes: [],             // Array of nodes inside this container
-                margin: 20,            // Margin around contained nodes
+                margin: 40,            // Margin around contained nodes
                 color: "#5c7a44",      // Default container color
-                title: "Container",    // Default title
+                title: "Cluster Workflow",    // Default title
                 isContainer: true,     // Flag to identify as container
                 bounding: [0, 0, 300, 200],  // Default size [x, y, width, height]
                 lastPos: [0, 0]        // Track last position for movement
@@ -284,41 +152,43 @@ app.registerExtension({
             // Get all interconnected nodes between FanIn and FanOut
             const interconnectedNodes = findInterconnectedNodes(fanInNode, fanOutNode);
             
-            // Initialize min/max values with the positions of FanIn and FanOut nodes
-            let minX = Math.min(fanInNode.pos[0], fanOutNode.pos[0]);
-            let minY = Math.min(fanInNode.pos[1], fanOutNode.pos[1]);
-            let maxX = Math.max(
-                fanInNode.pos[0] + fanInNode.size[0], 
-                fanOutNode.pos[0] + fanOutNode.size[0]
-            );
-            let maxY = Math.max(
-                fanInNode.pos[1] + fanInNode.size[1], 
-                fanOutNode.pos[1] + fanOutNode.size[1]
-            );
+            // Initialize bounds calculator with positions of FanIn and FanOut nodes
+            const bounds = {
+                minX: Math.min(fanInNode.pos[0], fanOutNode.pos[0]),
+                minY: Math.min(fanInNode.pos[1], fanOutNode.pos[1]),
+                maxX: Math.max(
+                    fanInNode.pos[0] + fanInNode.size[0], 
+                    fanOutNode.pos[0] + fanOutNode.size[0]
+                ),
+                maxY: Math.max(
+                    fanInNode.pos[1] + fanInNode.size[1], 
+                    fanOutNode.pos[1] + fanOutNode.size[1]
+                )
+            };
             
             // Expand bounds to include all interconnected nodes
             for (const node of interconnectedNodes) {
                 if (node === fanInNode || node === fanOutNode) continue;
                 
                 if (node.pos && node.size) {
-                    minX = Math.min(minX, node.pos[0]);
-                    minY = Math.min(minY, node.pos[1]);
-                    maxX = Math.max(maxX, node.pos[0] + node.size[0]);
-                    maxY = Math.max(maxY, node.pos[1] + node.size[1]);
+                    bounds.minX = Math.min(bounds.minX, node.pos[0]);
+                    bounds.minY = Math.min(bounds.minY, node.pos[1]);
+                    bounds.maxX = Math.max(bounds.maxX, node.pos[0] + node.size[0]);
+                    bounds.maxY = Math.max(bounds.maxY, node.pos[1] + node.size[1]);
                 }
             }
             
             // Apply margin to the bounds
-            minX -= margin;
-            minY -= margin;
-            maxX += margin;
-            maxY += margin;
+            bounds.minX -= margin;
+            bounds.minY -= margin;
+            bounds.maxX += margin;
+            bounds.maxY += margin;
             
             return {
-                x: minX,
-                y: minY,
-                width: maxX - minX,
-                height: maxY - minY
+                x: bounds.minX,
+                y: bounds.minY,
+                width: bounds.maxX - bounds.minX,
+                height: bounds.maxY - bounds.minY
             };
         }
         
@@ -425,7 +295,7 @@ app.registerExtension({
             app.graph.add = function(node) {
                 const result = originalAddNode.apply(this, arguments);
                 
-                // Find all FanIn nodes and recompute
+                // Find all FanOut nodes and recompute
                 if (this._nodes) {
                     for (const node of this._nodes) {
                         if (node && node.type === "ClusterFanOutImage") {
@@ -444,7 +314,7 @@ app.registerExtension({
             app.graph.remove = function(node) {
                 const result = originalRemoveNode.apply(this, arguments);
                 
-                // Find all FanIn nodes and recompute
+                // Find all FanOut nodes and recompute
                 if (this._nodes) {
                     for (const node of this._nodes) {
                         if (node && node.type === "ClusterFanOutImage") {

@@ -53,7 +53,7 @@ RUN chown -R comfy:comfy /workspace
 
 VOLUME /workspace
 
-COPY ./ComfyUI_Cluster/test_cluster/container/entrypoint.sh /entrypoint.sh
+COPY ./container/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 ENTRYPOINT ["/entrypoint.sh"]

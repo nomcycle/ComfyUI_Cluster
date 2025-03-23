@@ -4,6 +4,7 @@ from server import PromptServer
 
 from .instance_loop import InstanceLoop, get_instance_loop, instance_loop
 from .log import logger
+from .nodes.simple_node import SimpleVisualNode
 
 @PromptServer.instance.routes.post("/cluster/queue")
 async def queue(request):
@@ -35,8 +36,10 @@ NODE_CLASS_MAPPINGS = {
     "ClusterFlattenBatchedImageList": nodes.ClusterFlattenBatchedImageList,
     "ClusterSplitBatchToList": nodes.ClusterSplitBatchToList,
     "ClusterStridedReorder": nodes.ClusterStridedReorder,
+    "ClusterInsertAtIndex": nodes.ClusterInsertAtIndex,
     "ClusterFinallyFree": nodes.ClusterFinallyFree,
-    "ClusterFreeNow": nodes.ClusterFreeNow
+    "ClusterFreeNow": nodes.ClusterFreeNow,
+    "SimpleVisualNode": SimpleVisualNode
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -58,8 +61,10 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ClusterFlattenBatchedImageList": "Flatten Batched Image List",
     "ClusterSplitBatchToList": "Split Batch To List",
     "ClusterStridedReorder": "Strided Reorder Images",
+    "ClusterInsertAtIndex": "Insert At Index",
     "ClusterFinallyFree": "Finally Free",
-    "ClusterFreeNow": "Free Now"
+    "ClusterFreeNow": "Free Now",
+    "SimpleVisualNode": "Simple Visual Node"
 }
 
 WEB_DIRECTORY = "./js"

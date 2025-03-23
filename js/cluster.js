@@ -7,7 +7,7 @@ app.registerExtension({
 			new(await import("../../scripts/ui/components/button.js")).ComfyButton({
 				icon: "play",
 				action: async () => {
-					app.queuePrompt(0, 1);
+					// app.queuePrompt(0, 1);
 					const prompt = await app.graphToPrompt()
 					try {
 						const response = await fetch('/cluster/queue', {
