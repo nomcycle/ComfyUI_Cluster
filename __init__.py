@@ -6,6 +6,7 @@ from .instance_loop import InstanceLoop, get_instance_loop, instance_loop
 from .log import logger
 from .nodes.simple_node import SimpleVisualNode
 
+
 @PromptServer.instance.routes.post("/cluster/queue")
 async def queue(request):
     try:
@@ -17,6 +18,7 @@ async def queue(request):
     except Exception as e:
         logger.error("Error handling request", exc_info=True)
         return web.Response(status=500)
+
 
 NODE_CLASS_MAPPINGS = {
     "ClusterInfo": nodes.ClusterInfo,
@@ -39,7 +41,6 @@ NODE_CLASS_MAPPINGS = {
     "ClusterInsertAtIndex": nodes.ClusterInsertAtIndex,
     "ClusterFinallyFree": nodes.ClusterFinallyFree,
     "ClusterFreeNow": nodes.ClusterFreeNow,
-    "SimpleVisualNode": SimpleVisualNode
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -47,7 +48,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ClusterGetInstanceWorkItemFromBatch": "Get Instance Work Item From Batch",
     "ClusterFanInImages": "Fan-in Images",
     "ClusterGatherImages": "Gather Images",
-    "ClusterGatherLatents": "Gather Latents", 
+    "ClusterGatherLatents": "Gather Latents",
     "ClusterGatherMasks": "Gather Masks",
     "ClusterFanOutImage": "Fan-out Image",
     "ClusterFanOutLatent": "Fan-out Latent",
@@ -64,8 +65,11 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ClusterInsertAtIndex": "Insert At Index",
     "ClusterFinallyFree": "Finally Free",
     "ClusterFreeNow": "Free Now",
-    "SimpleVisualNode": "Simple Visual Node"
 }
 
 WEB_DIRECTORY = "./js"
-__all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS", "WEB_DIRECTORY"]
+__all__ = [
+    "NODE_CLASS_MAPPINGS",
+    "NODE_DISPLAY_NAME_MAPPINGS",
+    "WEB_DIRECTORY",
+]

@@ -6,20 +6,26 @@ from .udp_handle_message import UDPMessageHandler
 from .udp_handle_buffer import UDPBufferHandler
 from .env_vars import EnvVars
 
+
 class Cluster:
     def __init__(self):
         if not EnvVars._udp_broadcast:
             self._expected_instances = EnvVars.get_udp_hostnames()
-            logger.info('Awaiting instances (UDP broadcast disabled): %s', self._expected_instances)
-            UDPSingleton.set_cluster_instance_addresses(self._expected_instances)
+            logger.info(
+                "Awaiting instances (UDP broadcast disabled): %s",
+                self._expected_instances,
+            )
+            UDPSingleton.set_cluster_instance_addresses(
+                self._expected_instances
+            )
 
         self.udp_message_handler: UDPMessageHandler = None
         self.udp_buffer_handler: UDPBufferHandler = None
 
-        self.instances: Dict[int, 'OtherInstance'] = {}  # Fixed type hint
+        self.instances: Dict[int, "OtherInstance"] = {}  # Fixed type hint
         self.instance_count: int = EnvVars.get_instance_count()
-        logger.info('Expected instance count: %d', self.instance_count)
-    
+        logger.info("Expected instance count: %d", self.instance_count)
+
     def set_udp_message_handler(self, udp_message_handler: UDPMessageHandler):
         self.udp_message_handler = udp_message_handler
 

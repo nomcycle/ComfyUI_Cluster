@@ -1,5 +1,6 @@
 import random
 
+
 class SyncedRandom:
     _SYNCED_SEED = 12456
     _initialized = False
@@ -20,6 +21,6 @@ class SyncedRandom:
         random.setstate(SyncedRandom._synced_state)
         result = random.randint(-2147483648, 2147483647)
         SyncedRandom._synced_state = random.getstate()
-        
+
         random.setstate(current_state)
         return result
