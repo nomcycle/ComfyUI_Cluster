@@ -1,5 +1,4 @@
 import os
-from .log import logger
 from .protobuf.messages_pb2 import ClusterRole
 
 

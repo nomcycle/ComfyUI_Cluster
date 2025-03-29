@@ -1,11 +1,7 @@
 import socket
-import json
-import time
-import traceback
 from google.protobuf.json_format import MessageToJson
-from .protobuf.messages_pb2 import ClusterMessageType, ClusterAck
+from .protobuf.messages_pb2 import ClusterMessageType
 from .log import logger
-from .queued import OutgoingPacket
 
 
 class UDPEmitter:

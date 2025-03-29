@@ -1,5 +1,4 @@
 import asyncio
-from typing import Dict, TYPE_CHECKING
 
 from google.protobuf.json_format import ParseDict
 from ..log import logger
@@ -8,7 +7,6 @@ from ..protobuf.messages_pb2 import (
     ClusterState,
     ClusterMessageType,
     ClusterAnnounceInstance,
-    ClusterSignalIdle,
 )
 
 from .state_handler import StateHandler

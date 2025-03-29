@@ -1,14 +1,12 @@
-import asyncio
 import traceback
 import queue
 import time
-import threading
 
 from .log import logger
-from .udp_base import UDPBase, ACKResult
+from .udp_base import UDPBase
 from .udp_base import UDPSingleton
 from .env_vars import EnvVars
-from .queued import IncomingPacket, IncomingBuffer, OutgoingPacket
+from .queued import IncomingBuffer, OutgoingPacket
 
 
 class UDPBufferHandler(UDPBase):

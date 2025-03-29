@@ -1,12 +1,8 @@
-from typing import Dict, TYPE_CHECKING
+from typing import TYPE_CHECKING
 import json
 from google.protobuf.json_format import ParseDict
 
 import queue
-import asyncio
-import random
-import sys
-import math
 from .log import logger
 from .protobuf.messages_pb2 import (
     ClusterState,
@@ -19,8 +15,7 @@ from .protobuf.messages_pb2 import (
 from .cluster import Cluster
 from .states.state_result import StateResult
 from .env_vars import EnvVars
-from .queued import IncomingMessage, IncomingPacket, IncomingBuffer
-from .expected_msg import EXPECT_DISTRIBUTE_PROMPT_MSG_KEY
+from .queued import IncomingMessage, IncomingBuffer
 
 if TYPE_CHECKING:
     from .instance_loop import InstanceLoop

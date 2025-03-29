@@ -1,5 +1,4 @@
 from datetime import datetime
-from enum import Enum, auto
 import json
 from typing import Callable, Dict, List, TYPE_CHECKING
 
@@ -8,7 +7,6 @@ import numpy as np
 import requests
 import torch
 import threading
-import random
 import traceback
 
 from ..log import logger
@@ -16,11 +14,6 @@ from google.protobuf.json_format import ParseDict
 from ..protobuf.messages_pb2 import (
     ClusterState,
     ClusterMessageType,
-    ClusterDistributeBufferBegin,
-    ClusterDistributeBufferAck,
-    ClusterBufferType,
-    ClusterMessageHeader,
-    ClusterDistributeBufferResend,
     ClusterDistributeBufferDescriptor,
     ClusterDistributePrompt,
 )

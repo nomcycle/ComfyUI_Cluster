@@ -15,11 +15,9 @@ from ...expected_msg import BEGIN_BUFFER_EXPECTED_MSG_KEY
 
 from google.protobuf.json_format import ParseDict
 from ...protobuf.messages_pb2 import (
-    ClusterState,
     ClusterMessageType,
     ClusterDistributeBufferBegin,
     ClusterDistributeBufferAck,
-    ClusterBufferType,
     ClusterMessageHeader,
     ClusterDistributeBufferResend,
 )

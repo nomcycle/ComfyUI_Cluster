@@ -1,8 +1,6 @@
-import asyncio
 import requests
 import json
 from datetime import datetime
-from typing import Dict, TYPE_CHECKING
 
 from ..log import logger
 from google.protobuf.json_format import ParseDict

@@ -2,12 +2,10 @@ import asyncio
 import queue
 import time
 import traceback
-import os
 import json
 import socket
 from typing import Dict
 import threading
-from enum import Enum, auto
 
 from google.protobuf.json_format import ParseDict
 from .protobuf.messages_pb2 import (

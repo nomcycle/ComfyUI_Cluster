@@ -1,0 +1,16 @@
+[project]
+name = "ComfyUI_Cluster"
+version = "0.1.0"
+description = "Distrbuted ComfyUI inference."
+requires-python = ">=3.13"
+
+[dependency-groups]
+dev = [
+    "mypy>=1.15.0",
+    "pylint>=3.3.5",
+    "ruff>=0.9.10"
+]
+
+[tool.mypy]
+python_version = "3.13"
+strict = true

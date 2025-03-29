@@ -1,5 +1,4 @@
-from typing import Dict, TYPE_CHECKING
-from ..log import logger
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .state_handler import StateHandler
