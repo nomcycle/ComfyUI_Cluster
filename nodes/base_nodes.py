@@ -47,12 +47,12 @@ def find_subgraph_start_node(subgraph_id):
     current_queue = PromptServer.instance.prompt_queue.get_current_queue()
     item, item_id = current_queue
     _, _, prompt, _, _ = item[0]
-    
+
     # Find the ClusterStartSubgraph node with matching subgraph_id
     for node_id, node_data in prompt.items():
-        if (node_data.get("class_type") == "ClusterStartSubgraph" and 
+        if (node_data.get("class_type") == "ClusterStartSubgraph" and
             node_data.get("inputs", {}).get("subgraph_id") == subgraph_id):
             return node_id
-            
+
     # No matching node found
     raise ValueError(f"No ClusterStartSubgraph found with subgraph_id: {subgraph_id}")
