@@ -6,7 +6,7 @@ from abc import abstractmethod
 from server import PromptServer
 
 from .base_nodes import SyncedNode, ClusterNodePair
-from .utils import prepare_loop, get_subgraph, replace_nodes, add_preview_nodes, expand_use_subgraph_nodes
+from .utils import prepare_loop, get_subgraph, replace_nodes, add_preview_nodes
 from ..instance_loop import InstanceLoop, get_instance_loop
 from ..env_vars import EnvVars
 from ..log import logger
@@ -160,8 +160,13 @@ class ClusterFanOutBase(ClusterTensorNodeBase, ClusterNodePair):
                     f"Input must be a batch with at least: {EnvVars.get_instance_count()} tensors."
                 )
 
+            from .subgraph import SubgraphProcessor
+
+            # Extract the subgraph
             subgraph = get_subgraph(unique_id, self.get_start_type(), self.get_pair_end_type(), exclude_boundaries=False)
-            subgraph = expand_use_subgraph_nodes(subgraph)
+
+            # Process any nested ClusterUseSubgraph nodes
+            subgraph = SubgraphProcessor.process_nested_subgraphs(subgraph)
 
             # Apply modifications as needed
             subgraph = replace_nodes(subgraph, self.get_start_type(), ClusterListenTensorBroadcast.__name__, clear_inputs=True)

@@ -8,7 +8,6 @@ from server import PromptServer
 from .base_nodes import SyncedNode, ClusterNodePair
 from .tensor_nodes import declare_subgraph_start_node, declare_subgraph_end_node
 from ..instance_loop import InstanceLoop, get_instance_loop
-from .utils import build_use_subgraph
 
 prompt_queue = PromptServer.instance.prompt_queue
 
@@ -175,12 +174,13 @@ class ClusterUseSubgraph(ClusterSubgraph):
     CATEGORY = "Cluster"
 
     def execute(self, unique_id: str, image: tuple, subgraph_id: str) -> dict:
+        from .subgraph import SubgraphExpander
 
-        # Delegate to the utility function in utils.py
-        return build_use_subgraph(
-            unique_id=unique_id,
-            image=image,
+        # Directly use the SubgraphExpander
+        return SubgraphExpander.expand_subgraph(
             subgraph_id=subgraph_id,
+            unique_id=unique_id,
+            input_values={"image": image},
             start_node_type=ClusterStartSubgraph.__name__,
             end_node_type=ClusterEndSubgraph.__name__
         )

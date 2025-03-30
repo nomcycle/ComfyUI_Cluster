@@ -1,4 +1,4 @@
-from typing import Dict, List, Tuple, Any, Callable, Optional, TypeVar, Iterable, Set, Iterator
+from typing import Dict, List, Tuple, Any, Optional
 from functools import partial
 import asyncio
 
@@ -7,81 +7,11 @@ from ..log import logger
 from comfy_execution.graph_utils import GraphBuilder, is_link
 from ..instance_loop import InstanceLoop, get_instance_loop
 from .base_nodes import find_subgraph_start_node
+from .graph_utils import *
 
-T = TypeVar('T')
-NodeId = str
-NodeData = Dict[str, Any]
-Graph = Dict[NodeId, NodeData]
-
-# ---- Functional graph operations ----
-
-def nodes(graph: Graph) -> Iterator[Tuple[NodeId, NodeData]]:
-    """Iterator over all nodes in a graph."""
-    return graph.items()
-
-def node_ids(graph: Graph) -> Iterator[NodeId]:
-    """Iterator over all node IDs in a graph."""
-    return graph.keys()
-
-def where_type(graph: Graph, node_type: str) -> Iterator[Tuple[NodeId, NodeData]]:
-    """Filter nodes by type."""
-    return ((node_id, node_data) for node_id, node_data in nodes(graph)
-            if node_data.get("class_type") == node_type)
-
-def find_single(iterable: Iterable[T], default=None) -> Optional[T]:
-    """Find a single item from an iterable or return default."""
-    return next(iter(iterable), default)
-
-def inputs(node_data: NodeData) -> Iterator[Tuple[str, Any]]:
-    """Iterator over all inputs of a node."""
-    return node_data.get("inputs", {}).items()
-
-def inputs_where(node_data: NodeData, predicate: Callable[[str, Any], bool]) -> Iterator[Tuple[str, Any]]:
-    """Filter inputs based on a predicate."""
-    return ((name, value) for name, value in inputs(node_data) if predicate(name, value))
-
-def link_inputs(node_data: NodeData) -> Iterator[Tuple[str, List]]:
-    """Iterator over all link inputs of a node."""
-    return ((name, value) for name, value in inputs(node_data) if is_link(value))
-
-def nodes_connected_to(graph: Graph, target_id: NodeId) -> Iterator[Tuple[NodeId, NodeData, str]]:
-    """Find all nodes that connect to the target node."""
-    for node_id, node_data in nodes(graph):
-        for input_name, input_value in link_inputs(node_data):
-            if input_value[0] == target_id:
-                yield node_id, node_data, input_name
-
-def nodes_receiving_from(graph: Graph, source_id: NodeId) -> Iterator[Tuple[NodeId, NodeData, str, int]]:
-    """Find all nodes that receive from the source node."""
-    for node_id, node_data in nodes(graph):
-        for input_name, input_value in link_inputs(node_data):
-            if input_value[0] == source_id:
-                yield node_id, node_data, input_name, input_value[1]
-
-def connected_to_any(graph: Graph, node_ids: List[NodeId]) -> Set[NodeId]:
-    """Find all nodes connected to any node in the given list."""
-    result = set()
-    for target_id in node_ids:
-        for node_id, _, _ in nodes_connected_to(graph, target_id):
-            result.add(node_id)
-    return result
-
-def receiving_from_any(graph: Graph, node_ids: List[NodeId]) -> Set[NodeId]:
-    """Find all nodes that receive from any node in the given list."""
-    result = set()
-    for source_id in node_ids:
-        for node_id, _, _, _ in nodes_receiving_from(graph, source_id):
-            result.add(node_id)
-    return result
-
-def exclude(graph: Graph, ids_to_exclude: Set[NodeId]) -> Graph:
-    """Create a new graph excluding specific node IDs."""
-    return {node_id: node_data for node_id, node_data in nodes(graph)
-            if node_id not in ids_to_exclude}
-
-def deep_copy_graph(graph: Graph) -> Graph:
-    """Create a deep copy of a graph."""
-    return {node_id: node_data.copy() for node_id, node_data in nodes(graph)}
+# Import declarations for backward compatibility
+# These will be imported later to avoid circular imports
+SubgraphExpander = None
 
 # ---- Prompt access ----
 
@@ -256,67 +186,11 @@ def add_preview_nodes(subgraph: Graph, target_type: str) -> Graph:
 
 # ---- Node expansion utilities ----
 
-def find_subgraph_start_node(subgraph_id: str) -> NodeId:
-    """Find a ClusterStartSubgraph node with the matching subgraph_id."""
-    prompt = get_current_prompt()
-
-    predicate = lambda node_data: (
-        node_data.get("class_type") == "ClusterStartSubgraph" and
-        node_data.get("inputs", {}).get("subgraph_id") == subgraph_id
-    )
-
-    matching_nodes = [(node_id, node_data) for node_id, node_data in nodes(prompt) if predicate(node_data)]
-
-    if not matching_nodes:
-        raise ValueError(f"No ClusterStartSubgraph found with subgraph_id: {subgraph_id}")
-
-    return matching_nodes[0][0]
-
 def expand_use_subgraph_nodes(subgraph: Graph) -> Graph:
     """Expand ClusterUseSubgraph nodes in a subgraph."""
-    from .workflow_nodes import ClusterUseSubgraph
-
-    # Find nodes to expand
-    use_nodes = list(where_type(subgraph, ClusterUseSubgraph.__name__))
-    if not use_nodes:
-        return subgraph
-
-    # Deep copy the subgraph
-    result = deep_copy_graph(subgraph)
-
-    # Expand each node
-    for node_id, node_data in use_nodes:
-        # Get expansion details
-        nested_info = get_use_subgraph_expansion(node_id, node_data)
-        nested_subgraph, start_type, end_type = nested_info
-
-        # Get connections
-        input_connections = node_data.get("inputs", {})
-        output_connections = list(nodes_receiving_from(result, node_id))
-        prefix = f"{node_id}_"
-
-        # Build and integrate expanded nodes
-        expanded_nodes, start_nodes, end_nodes = build_expanded_subgraph(
-            nested_subgraph, prefix, start_type, end_type,
-            input_connections, output_connections
-        )
-
-        # Connect external inputs to start nodes
-        for start_id in start_nodes:
-            if "image" in input_connections and is_link(input_connections["image"]):
-                expanded_nodes[start_id]["inputs"]["image"] = input_connections["image"]
-
-        # Connect end nodes to outputs
-        if end_nodes:
-            end_id = end_nodes[0]  # Use the first end node for simplicity
-            for target_id, _, input_name, _ in output_connections:
-                subgraph[target_id]["inputs"][input_name] = [end_id, 0]
-
-        # Remove original node and add expanded nodes
-        del result[node_id]
-        result.update(expanded_nodes)
-
-    return result
+    # Use lazy import to avoid circular imports
+    from .subgraph import SubgraphProcessor
+    return SubgraphProcessor.process_nested_subgraphs(subgraph)
 
 def get_use_subgraph_expansion(node_id: NodeId, node_data: NodeData) -> Optional[Tuple[Graph, str, str]]:
     """Get expansion details for a ClusterUseSubgraph node."""
@@ -407,8 +281,6 @@ def build_expanded_subgraph(
 
     return expanded_nodes, start_nodes, end_nodes
 
-# Various other methods would be updated to use these functional utilities
-
 # ---- Connection utilities ----
 
 def connect_inputs_and_finalize(subgraph_components: Dict[str, Any], external_inputs: List[Tuple[NodeId, str, Any]]) -> Dict[str, Any]:
@@ -458,138 +330,21 @@ def prepare_loop() -> tuple[asyncio.AbstractEventLoop, InstanceLoop]:
     instance: InstanceLoop = get_instance_loop()
     return loop, instance
 
+# Backward compatibility functions that delegate to SubgraphExpander
 def find_subgraph_end_node(start_node_id: str, end_node_type: str) -> str:
-    """
-    Find the end node associated with a specific start node by traversing connections.
-    
-    Args:
-        start_node_id: The ID of the start node
-        end_node_type: The class type of the end node to find
-        
-    Returns:
-        The ID of the matching end node
-    """
-    prompt = get_current_prompt()
-    end_node_id = None
-    end_nodes = []
-
-    # Find the end node by traversing connections from the start node
-    for node_id, node_data in nodes(prompt):
-        if node_data.get("class_type") == end_node_type:
-            # Check if this end node is connected to our subgraph
-            visited = set()
-            to_visit = [node_id]
-
-            while to_visit and not end_node_id:
-                current = to_visit.pop()
-                if current in visited:
-                    continue
-                visited.add(current)
-
-                for inp_name, inp_value in link_inputs(prompt.get(current, {})):
-                    connected_id = inp_value[0]
-                    if connected_id == start_node_id:
-                        end_node_id = node_id
-                        end_nodes.append(node_id)
-                        break
-                    if connected_id not in visited:
-                        to_visit.append(connected_id)
-
-            if end_node_id:
-                break
-
-    if not end_node_id:
-        raise ValueError(f"No matching end node found for start node: {start_node_id}")
-
-    return end_node_id
+    """Delegate to SubgraphExpander.find_subgraph_end_node."""
+    # Import here to avoid circular imports
+    from .subgraph import SubgraphExpander
+    return SubgraphExpander.find_subgraph_end_node(start_node_id, end_node_type)
 
 def build_use_subgraph(unique_id: str, image: tuple, subgraph_id: str, start_node_type: str, end_node_type: str) -> dict:
-    """
-    Build and expand a subgraph for the ClusterUseSubgraph node.
-    
-    This function implements the core functionality of ClusterUseSubgraph.execute:
-    1. Find the appropriate start/end nodes for the referenced subgraph
-    2. Extract the subgraph between these boundary nodes
-    3. Create a graph expansion that can replace the ClusterUseSubgraph node
-    
-    Args:
-        unique_id: The unique ID of the ClusterUseSubgraph node
-        image: The input image tensor
-        subgraph_id: The ID of the subgraph to use
-        start_node_type: The class type of start nodes (e.g., "ClusterStartSubgraph")
-        end_node_type: The class type of end nodes (e.g., "ClusterEndSubgraph")
-    
-    Returns:
-        A dictionary containing:
-          - result: The output of the expanded subgraph
-          - expand: The graph expansion specification
-    """
-    from comfy_execution.graph_utils import GraphBuilder
-    # Use utility functions from the current module to avoid circular imports
-
-    # Find the start node with matching subgraph_id
-    start_node_id = find_subgraph_start_node(subgraph_id)
-
-    # Find the matching end node
-    end_node_id = find_subgraph_end_node(start_node_id, end_node_type)
-
-    # Get the subgraph with boundaries included for accurate connection mapping
-    full_subgraph = get_subgraph(start_node_id, start_node_type, end_node_type, exclude_boundaries=False)
-
-    # Find nodes that connect to the end node - these are our output nodes
-    output_node_ids = []
-    for input_name, input_value in link_inputs(full_subgraph.get(end_node_id, {})):
-        output_node_ids.append(input_value[0])
-
-    if not output_node_ids:
-        raise ValueError(f"No nodes found that connect to the end node for subgraph_id: {subgraph_id}")
-
-    # Use the first output node
-    output_node_id = output_node_ids[0]
-
-    # Create a GraphBuilder instance for node expansion
-    graph = GraphBuilder(prefix=f"{unique_id}_")
-    node_mapping = {}
-
-    # First pass: create all nodes
-    for node_id, node_data in nodes(full_subgraph):
-        # Skip boundary nodes - they shouldn't be included in expansion
-        if node_data.get("class_type") in [start_node_type, end_node_type]:
-            continue
-
-        # Extract non-link inputs
-        static_inputs = {k: v for k, v in inputs(node_data) if not is_link(v)}
-        # Create the node
-        node = graph.node(node_data["class_type"], id=node_id, **static_inputs)
-        node_mapping[node_id] = node
-
-    # Second pass: connect internal links
-    for node_id, node_data in nodes(full_subgraph):
-        # Skip boundary nodes
-        if node_data.get("class_type") in [start_node_type, end_node_type]:
-            continue
-
-        if node_id in node_mapping:
-            current_node = node_mapping[node_id]
-            for input_name, input_value in link_inputs(node_data):
-                source_id = input_value[0]
-
-                # If source is start node, connect the external input
-                if full_subgraph.get(source_id, {}).get("class_type") == start_node_type:
-                    current_node.set_input(input_name, image)
-                # Otherwise, connect to internal nodes if they exist
-                elif source_id in node_mapping:
-                    source_node = node_mapping[source_id]
-                    current_node.set_input(input_name, source_node.out(input_value[1]))
-
-    # Get the output node that should be used in the result
-    if output_node_id not in node_mapping:
-        raise ValueError(f"Output node {output_node_id} not found in node mapping")
-
-    output_node = node_mapping[output_node_id]
-
-    # Return the dictionary for node expansion
-    return {
-        "result": (output_node.out(0),),
-        "expand": graph.finalize()
-    }
+    """Delegate to SubgraphExpander.expand_subgraph."""
+    # Import here to avoid circular imports
+    from .subgraph import SubgraphExpander
+    return SubgraphExpander.expand_subgraph(
+        subgraph_id=subgraph_id,
+        unique_id=unique_id,
+        input_values={"image": image},
+        start_node_type=start_node_type,
+        end_node_type=end_node_type
+    )
