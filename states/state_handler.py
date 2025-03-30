@@ -1,4 +1,3 @@
-from typing import Dict
 
 from ..log import logger
 from ..instance import ThisInstance

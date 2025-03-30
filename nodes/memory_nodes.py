@@ -1,3 +1,6 @@
+import gc
+import torch
+import traceback
 import comfy.model_management as model_management
 
 from server import PromptServer
@@ -32,12 +35,12 @@ class ClusterFinallyFree(SyncedNode):
             if hasattr(prompt_queue, "set_flag"):
                 if unload_models:
                     prompt_queue.set_flag("unload_models", unload_models)
-                    logger.info(f"Set flag to unload models")
+                    logger.info("Set flag to unload models")
 
                 if free_memory:
                     prompt_queue.set_flag("free_memory", free_memory)
                     logger.info(
-                        f"Set flag to free memory and reset execution cache"
+                        "Set flag to free memory and reset execution cache"
                     )
 
             return ()
@@ -69,11 +72,11 @@ class ClusterFreeNow(SyncedNode):
     def execute(self, anything, unload_models, free_memory):
         try:
             if unload_models:
-                logger.info(f"Immediately unloading models")
+                logger.info("Immediately unloading models")
                 model_management.unload_all_models()
 
             if free_memory:
-                logger.info(f"Immediately freeing memory cache.")
+                logger.info("Immediately freeing memory cache.")
                 model_management.soft_empty_cache()
                 torch.cuda.empty_cache()
                 gc.collect()

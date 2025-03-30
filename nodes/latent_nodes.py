@@ -1,5 +1,5 @@
 import torch
-from .tensor_nodes import ClusterGatherBase, ClusterFanOutBase
+from .tensor_nodes import ClusterGatherBase, ClusterFanOutBase, ClusterFanInBase, declare_subgraph_end_node, declare_subgraph_start_node
 
 
 class ClusterLatentNodeMixin:
@@ -19,6 +19,10 @@ class ClusterLatentNodeMixin:
 class ClusterGatherLatents(ClusterLatentNodeMixin, ClusterGatherBase):
     pass
 
-
+@declare_subgraph_start_node('latent_fan')
 class ClusterFanOutLatent(ClusterLatentNodeMixin, ClusterFanOutBase):
+    pass
+
+@declare_subgraph_end_node('latent_fan')
+class ClusterFanInLatent(ClusterLatentNodeMixin, ClusterFanInBase):
     pass

@@ -3,9 +3,6 @@ ComfyUI Cluster nodes module.
 This module contains nodes for cluster operations in ComfyUI.
 """
 
-# Base classes
-from .base_nodes import SyncedNode, Anything
-
 # Info nodes
 from .info_nodes import ClusterInfo
 
@@ -13,7 +10,7 @@ from .info_nodes import ClusterInfo
 from .memory_nodes import ClusterFinallyFree, ClusterFreeNow
 
 # Workflow execution nodes
-from .workflow_nodes import ClusterExecuteWorkflow, ClusterExecuteCurrentWorkflow, ClusterStartSubraph, ClusterEndSubraph
+from .workflow_nodes import ClusterExecuteWorkflow, ClusterExecuteCurrentWorkflow, ClusterStartSubgraph, ClusterEndSubgraph, ClusterUseSubgraph
 
 # Tensor operation nodes
 from .tensor_nodes import (
@@ -55,8 +52,9 @@ NODE_CLASS_MAPPINGS = {
     "ClusterFreeNow": ClusterFreeNow,
     "ClusterGetInstanceWorkItemFromBatch": ClusterGetInstanceWorkItemFromBatch,
     "ClusterExecuteWorkflow": ClusterExecuteWorkflow,
-    "ClusterStartSubgraph": ClusterStartSubraph,
-    "ClusterEndSubgraph": ClusterEndSubraph,
+    "ClusterStartSubgraph": ClusterStartSubgraph,
+    "ClusterEndSubgraph": ClusterEndSubgraph,
+    "ClusterUseSubgraph": ClusterUseSubgraph,
     "ClusterExecuteCurrentWorkflow": ClusterExecuteCurrentWorkflow,
     "ClusterListenTensorBroadcast": ClusterListenTensorBroadcast,
     "ClusterBroadcastTensor": ClusterBroadcastTensor,
@@ -81,8 +79,9 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ClusterFreeNow": "Cluster Free Now",
     "ClusterGetInstanceWorkItemFromBatch": "Cluster Get Instance Work Item From Batch",
     "ClusterExecuteWorkflow": "Cluster Execute Workflow",
-    "ClusterStartSubgraph": "Start Subgraph",
-    "ClusterEndSubgraph": "End Subgraph",
+    "ClusterStartSubgraph": "Cluster Start Subgraph",
+    "ClusterEndSubgraph": "Cluster End Subgraph",
+    "ClusterUseSubgraph": "Cluster Use Subgraph",
     "ClusterExecuteCurrentWorkflow": "Cluster Execute Current Workflow",
     "ClusterListenTensorBroadcast": "Cluster Listen Tensor Broadcast",
     "ClusterBroadcastTensor": "Cluster Broadcast Tensor",

@@ -153,7 +153,6 @@ class UDPSingleton:
         # Buffer size is 262144, MTU is typically 1500 bytes
         # So we can batch around 174 packets at a time
         batch_size = 174
-        batch = [None] * batch_size
         count = 0
 
         while count < batch_size:

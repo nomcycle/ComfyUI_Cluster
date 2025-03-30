@@ -81,7 +81,7 @@ class UDPBufferHandler(UDPBase):
                 logger.debug("Incoming buffer queue size: %s", queue_size)
 
         except queue.Full:
-            logger.warning(f"Message queue full, dropping buffer.")
+            logger.warning("Message queue full, dropping buffer.")
 
     def _emit_byte_buffer(self, outgoing_packet: OutgoingPacket):
         # Remove duplicate emission when addr is provided

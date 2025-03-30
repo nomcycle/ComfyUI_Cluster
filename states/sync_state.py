@@ -1,6 +1,6 @@
 from datetime import datetime
 import json
-from typing import Callable, Dict, List, TYPE_CHECKING
+from typing import Callable, Dict, List
 
 import asyncio
 import numpy as np
@@ -201,7 +201,6 @@ class SyncStateHandler(StateHandler):
         """
         from io import BytesIO
         from PIL import Image
-        import pickle
 
         # Log tensor information before compression
         logger.info(f"Compressing tensor with shape {tensor.shape}")

@@ -1,5 +1,3 @@
-import aiohttp
-import json
 from aiohttp import web
 from server import PromptServer
 
@@ -15,7 +13,7 @@ async def queue(request):
         await instance._this_instance.distribute_prompt(prompt_data)
         logger.info("Successfully queued prompt for distribution.")
         return web.Response(status=200)
-    except Exception as e:
+    except Exception:
         logger.error("Error handling request", exc_info=True)
         return web.Response(status=500)
 

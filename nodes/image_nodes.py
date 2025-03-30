@@ -1,6 +1,6 @@
 import torch
 import traceback
-from .tensor_nodes import ClusterFanInBase, ClusterGatherBase, ClusterFanOutBase, ClusterBroadcastTensor
+from .tensor_nodes import ClusterFanInBase, ClusterGatherBase, ClusterFanOutBase, ClusterBroadcastTensor, declare_subgraph_end_node, declare_subgraph_start_node
 from ..env_vars import EnvVars
 from ..log import logger
 
@@ -15,18 +15,16 @@ class ClusterImageNodeMixin:
     def get_input(self, input) -> torch.Tensor:
         return input[0] if isinstance(input, tuple) else input
 
-
+@declare_subgraph_end_node('image_fan')
 class ClusterFanInImages(ClusterImageNodeMixin, ClusterFanInBase):
     pass
-
 
 class ClusterGatherImages(ClusterImageNodeMixin, ClusterGatherBase):
     pass
 
-
+@declare_subgraph_start_node('image_fan')
 class ClusterFanOutImage(ClusterImageNodeMixin, ClusterFanOutBase):
     pass
-
 
 class ClusterBroadcastLoadedImage(ClusterBroadcastTensor):
     @classmethod
@@ -69,7 +67,7 @@ class ClusterBroadcastLoadedImage(ClusterBroadcastTensor):
             return LoadImage.VALIDATE_INPUTS(image)
         return True
 
-    def _sync_operation(self, instance, input):
+    async def _sync_operation(self, instance, input):
         if EnvVars.get_instance_index() == 0:
-            return instance._this_instance.broadcast_tensor(input)
-        return instance._this_instance.receive_tensor_fanout()
+            return await instance._this_instance.broadcast_tensor(input)
+        return await instance._this_instance.receive_tensor_fanout()
