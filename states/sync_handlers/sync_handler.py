@@ -1,15 +1,15 @@
 import asyncio
-
 from abc import abstractmethod
-from ...queued import IncomingMessage, IncomingBuffer
+
+from ...udp.queued import IncomingMessage, IncomingBuffer
 from ..state_result import StateResult
 
-from ...udp_handle_message import UDPMessageHandler
-from ...udp_handle_buffer import UDPBufferHandler
+from ...udp.udp_handle_message import UDPMessageHandler
+from ...udp.udp_handle_buffer import UDPBufferHandler
 
 
 class SyncHandler:
-    HEADER_SIZE = 12  # 4 bytes each for buffer flag, instance_id and chunk id
+    HEADER_SIZE = 12  # 4 bytes each for buffer flag, instance_id, and chunk id
     UDP_MTU = 1460
 
     def __init__(
@@ -25,24 +25,29 @@ class SyncHandler:
     async def _fence_instances(self) -> bool:
         result = await self._udp_message_handler.await_fence_thread_safe(69)
         if not result.success:
-            raise Exception("Failed to fence instances")
+            raise Exception('Failed to fence instances')
+        return True
 
     @abstractmethod
     async def begin(self):
+        '''Initiate the synchronization process.'''
         pass
 
     @abstractmethod
     async def handle_message(
         self, current_state: int, incoming_message: IncomingMessage
     ) -> StateResult | None:
+        '''Handle an incoming message.'''
         pass
 
     @abstractmethod
     async def handle_buffer(
         self, current_state: int, incoming_buffer: IncomingBuffer
     ) -> StateResult | None:
+        '''Handle an incoming buffer.'''
         pass
 
     @abstractmethod
     async def tick(self):
+        '''Periodic tick for processing.'''
         pass

@@ -15,8 +15,8 @@ from .state_result import StateResult
 
 from ..instance import ThisInstance
 from ..env_vars import EnvVars
-from ..queued import IncomingBuffer, IncomingMessage
-from ..expected_msg import EXPECT_DISTRIBUTE_PROMPT_MSG_KEY
+from ..udp.queued import IncomingBuffer, IncomingMessage
+from ..udp.expected_msg import EXPECT_DISTRIBUTE_PROMPT_MSG_KEY
 
 
 class IdleStateHandler(StateHandler):
@@ -58,7 +58,7 @@ class IdleStateHandler(StateHandler):
             logger.info("Successfully posted prompt to local ComfyUI instance")
 
         except requests.exceptions.RequestException as e:
-            logger.error(f"Error posting prompt: {str(e)}")
+            logger.error("Error posting prompt: %s", str(e))
 
         self._received_distribute_prompt_msg = True
 

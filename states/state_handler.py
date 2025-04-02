@@ -1,7 +1,7 @@
 
 from ..log import logger
 from ..instance import ThisInstance
-from ..queued import IncomingMessage, IncomingBuffer
+from ..udp.queued import IncomingMessage, IncomingBuffer
 
 
 class StateHandler:

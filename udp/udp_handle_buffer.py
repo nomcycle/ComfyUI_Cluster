@@ -2,10 +2,10 @@ import traceback
 import queue
 import time
 
-from .log import logger
+from ..log import logger
+from ..env_vars import EnvVars
 from .udp_base import UDPBase
 from .udp_base import UDPSingleton
-from .env_vars import EnvVars
 from .queued import IncomingBuffer, OutgoingPacket
 
 

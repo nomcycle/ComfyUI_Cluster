@@ -1,9 +1,9 @@
 from typing import Dict
 
 from .log import logger
-from .udp_base import UDPSingleton
-from .udp_handle_message import UDPMessageHandler
-from .udp_handle_buffer import UDPBufferHandler
+from .udp.udp_base import UDPSingleton
+from .udp.udp_handle_message import UDPMessageHandler
+from .udp.udp_handle_buffer import UDPBufferHandler
 from .env_vars import EnvVars
 
 

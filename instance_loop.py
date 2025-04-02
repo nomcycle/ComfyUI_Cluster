@@ -9,9 +9,9 @@ from .protobuf.messages_pb2 import ClusterRole
 
 from .cluster import Cluster
 from .instance import ThisInstance, ThisLeaderInstance, ThisFollowerInstance
-from .udp_base import UDPSingleton
-from .udp_handle_message import UDPMessageHandler
-from .udp_handle_buffer import UDPBufferHandler
+from .udp.udp_base import UDPSingleton
+from .udp.udp_handle_message import UDPMessageHandler
+from .udp.udp_handle_buffer import UDPBufferHandler
 
 global instance_loop
 instance_loop = None

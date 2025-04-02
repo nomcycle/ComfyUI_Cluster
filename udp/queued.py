@@ -1,5 +1,5 @@
 from google.protobuf.json_format import ParseDict
-from .protobuf.messages_pb2 import (
+from ..protobuf.messages_pb2 import (
     ClusterMessageType,
     ClusterAck,
     ClusterSignalHotReload,

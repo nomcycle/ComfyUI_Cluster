@@ -1,8 +1,8 @@
 import socket
 from google.protobuf.json_format import MessageToJson
-from .protobuf.messages_pb2 import ClusterMessageType
-from .log import logger
+from ..protobuf.messages_pb2 import ClusterMessageType
 
+from ..log import logger
 
 class UDPEmitter:
     def __init__(self, port: int):

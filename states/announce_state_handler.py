@@ -22,8 +22,8 @@ from ..instance import (
     OtherLeaderInstance,
     OtherFollowerInstance,
 )
-from ..queued import IncomingMessage
-from ..udp_base import UDPSingleton
+from ..udp.queued import IncomingMessage
+from ..udp.udp_base import UDPSingleton
 
 
 class AnnounceInstanceStateHandler(StateHandler):

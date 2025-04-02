@@ -4,10 +4,10 @@ import time
 import traceback
 from abc import ABC, abstractmethod
 
+from ..log import logger
+from ..env_vars import EnvVars
 from .sender import UDPEmitter
 from .listener import UDPListener
-from .log import logger
-from .env_vars import EnvVars
 from .queued import IncomingPacket, IncomingBuffer, OutgoingPacket
 
 

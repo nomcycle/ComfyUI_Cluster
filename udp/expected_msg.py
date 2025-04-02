@@ -1,4 +1,4 @@
-from .synced_random import SyncedRandom
+from ..synced_random import SyncedRandom
 
 EXPECT_DISTRIBUTE_PROMPT_MSG_KEY: int = abs(SyncedRandom.get_random_int())
 FANOUT_EXPECTED_MSG_KEY: int = abs(SyncedRandom.get_random_int())

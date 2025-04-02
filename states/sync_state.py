@@ -23,14 +23,13 @@ from .state_result import StateResult
 from ..instance import ThisInstance
 from ..env_vars import EnvVars
 
-from ..queued import IncomingMessage, IncomingBuffer
-
 from .sync_handlers.emitter import Emitter
 from .sync_handlers.receiver import Receiver
 
 from .sync_handlers.sync_handler import SyncHandler
 
-from ..expected_msg import (
+from ..udp.queued import IncomingMessage, IncomingBuffer
+from ..udp.expected_msg import (
     FANIN_EXPECTED_MSG_KEY,
     FANOUT_EXPECTED_MSG_KEY,
     GATHER_EXPECTED_MSG_KEY,

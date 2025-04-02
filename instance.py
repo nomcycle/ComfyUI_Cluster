@@ -15,7 +15,7 @@ from .protobuf.messages_pb2 import (
 from .cluster import Cluster
 from .states.state_result import StateResult
 from .env_vars import EnvVars
-from .queued import IncomingMessage, IncomingBuffer
+from .udp.queued import IncomingMessage, IncomingBuffer
 
 if TYPE_CHECKING:
     from .instance_loop import InstanceLoop

@@ -8,7 +8,7 @@ from typing import Dict
 import threading
 
 from google.protobuf.json_format import ParseDict
-from .protobuf.messages_pb2 import (
+from ..protobuf.messages_pb2 import (
     ClusterMessageType,
     ClusterAck,
     ClusterRequestState,
@@ -17,8 +17,8 @@ from .protobuf.messages_pb2 import (
     ClusterAwaitingFence,
 )
 
-from .log import logger
-from .env_vars import EnvVars
+from ..log import logger
+from ..env_vars import EnvVars
 from .udp_base import UDPBase, ACKResult
 from .udp_base import UDPSingleton
 from .queued import IncomingPacket, IncomingMessage, OutgoingPacket

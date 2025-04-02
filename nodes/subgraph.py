@@ -221,7 +221,7 @@ class SubgraphProcessor:
         # Connect outputs to parent graph
         output_connections = list(nodes_receiving_from(parent_graph, node_id))
         connections = SubgraphProcessor._connect_to_parent(expanded_subgraph, output_connections)
-        
+
         # Apply connections to parent graph
         if connections:
             for target_id, input_name, source_id in connections:

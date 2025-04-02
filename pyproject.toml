@@ -14,3 +14,13 @@ dev = [
 [tool.mypy]
 python_version = "3.13"
 strict = true
+
+[tool.ruff]
+ignore = ["W293"]
+line-length = 250
+
+[tool.ruff.format]
+skip-magic-trailing-comma = false
+line-ending = "lf"
+indent-style = "space"
+quote-style = "single"

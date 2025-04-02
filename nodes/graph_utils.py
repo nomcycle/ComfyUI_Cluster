@@ -1,5 +1,4 @@
 from typing import Dict, List, Tuple, Any, Callable, Optional, TypeVar, Iterable, Set, Iterator
-from functools import partial
 
 from server import PromptServer
 from comfy_execution.graph_utils import is_link
