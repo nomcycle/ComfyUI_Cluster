@@ -2,7 +2,6 @@ import asyncio
 import threading
 from typing import Dict, List
 from ...udp.queued import IncomingBuffer, IncomingMessage
-from ..state_result import StateResult
 import time
 
 import numpy as np
@@ -88,7 +87,7 @@ class Receiver(SyncHandler):
 
     async def handle_message(
         self, current_state: int, incoming_message: IncomingMessage
-    ) -> StateResult | None:
+    ) -> None:
         pass
 
     def _buffer_progress(self):
@@ -180,7 +179,7 @@ class Receiver(SyncHandler):
 
     async def handle_buffer(
         self, current_state: int, incoming_buffer: IncomingBuffer
-    ) -> StateResult | None:
+    ) -> None:
         with self._thread_lock:
             sender_instance_id = incoming_buffer.get_sender_instance_id()
             if sender_instance_id == EnvVars.get_instance_index() or sender_instance_id != self._sender_instance_id:

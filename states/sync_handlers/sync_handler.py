@@ -1,9 +1,8 @@
 import asyncio
 from abc import abstractmethod
+from typing import Optional
 
 from ...udp.queued import IncomingMessage, IncomingBuffer
-from ..state_result import StateResult
-
 from ...udp.udp_handle_message import UDPMessageHandler
 from ...udp.udp_handle_buffer import UDPBufferHandler
 
@@ -36,14 +35,14 @@ class SyncHandler:
     @abstractmethod
     async def handle_message(
         self, current_state: int, incoming_message: IncomingMessage
-    ) -> StateResult | None:
+    ) -> None:
         '''Handle an incoming message.'''
         pass
 
     @abstractmethod
     async def handle_buffer(
         self, current_state: int, incoming_buffer: IncomingBuffer
-    ) -> StateResult | None:
+    ) -> None:
         '''Handle an incoming buffer.'''
         pass
 

@@ -1,6 +1,5 @@
 from ...log import logger
 from ...udp.queued import IncomingMessage
-from ..state_result import StateResult
 from .sync_handler import SyncHandler
 from ...env_vars import EnvVars
 from ...udp.expected_msg import BEGIN_BUFFER_EXPECTED_MSG_KEY
@@ -108,24 +107,22 @@ class Emitter(SyncHandler):
 
     async def handle_message(
         self, current_state: int, incoming_message: IncomingMessage
-    ) -> Optional[StateResult]:
+    ) -> None:
         with self._thread_lock:
             # Handle resend requests
             if incoming_message.msg_type == ClusterMessageType.DISTRIBUTE_BUFFER_RESEND:
-                return await self._handle_resend_request(incoming_message)
+                await self._handle_resend_request(incoming_message)
                 
             # Handle acknowledgments
-            if incoming_message.msg_type == ClusterMessageType.DISTRIBUTE_BUFFER_ACK:
-                return await self._handle_ack(incoming_message)
-                
-        return None
+            elif incoming_message.msg_type == ClusterMessageType.DISTRIBUTE_BUFFER_ACK:
+                await self._handle_ack(incoming_message)
                 
     async def _handle_resend_request(self, incoming_message: IncomingMessage) -> None:
         sender_id = incoming_message.sender_instance_id
         
         # Skip if this instance has already completed receiving the buffer
         if self._instance_states.get(sender_id) == OtherInstanceState.COMPLETE_BUFFER:
-            return None
+            return
             
         # Parse the resend message
         resend_msg = ParseDict(
@@ -168,8 +165,6 @@ class Emitter(SyncHandler):
         # Update instance state
         self._instance_states[sender_id] = OtherInstanceState.REQUESTED_RESEND
         
-        return None
-        
     async def _handle_ack(self, incoming_message: IncomingMessage) -> None:
         logger.debug('Received buffer ACK')
         
@@ -196,8 +191,6 @@ class Emitter(SyncHandler):
             self._async_loop.call_soon_threadsafe(
                 self._all_instances_received_buffer.set_result, None
             )
-            
-        return None
 
     def _create_chunks(self, byte_buffer: bytes) -> None:
         chunk_size = SyncHandler.UDP_MTU - SyncHandler.HEADER_SIZE

@@ -75,18 +75,47 @@ class AddressRegistry:
     """
     def __init__(self):
         self._cluster_instance_addresses: List[Tuple[int, str, int]] = []
+        # Additional lookup for faster address retrieval by instance ID
+        self._instance_id_to_idx: Dict[int, int] = {}
     
     def set_addresses(self, addresses: List[Tuple[int, str, int]]):
         """Set the addresses of all cluster instances."""
         logger.info("Setting cluster addresses: %s", addresses)
         self._cluster_instance_addresses = addresses
+        
+        # Rebuild instance ID lookup
+        self._instance_id_to_idx = {}
+        for idx, (instance_id, _, _) in enumerate(addresses):
+            self._instance_id_to_idx[instance_id] = idx
     
     def get_address(self, instance_id: int) -> Tuple[str, int]:
-        """Get the address of a specific instance."""
-        return (
-            self._cluster_instance_addresses[instance_id][1],
-            self._cluster_instance_addresses[instance_id][2],
-        )
+        """
+        Get the address of a specific instance.
+        
+        Args:
+            instance_id: The ID of the instance to look up
+            
+        Returns:
+            A tuple of (address, port) for the instance
+            
+        Raises:
+            KeyError: If the instance ID is not found
+        """
+        # First check if we have the instance ID in our lookup
+        if instance_id in self._instance_id_to_idx:
+            idx = self._instance_id_to_idx[instance_id]
+            return (
+                self._cluster_instance_addresses[idx][1],
+                self._cluster_instance_addresses[idx][2],
+            )
+        
+        # If not in lookup, search through addresses
+        for addr_instance_id, addr, port in self._cluster_instance_addresses:
+            if addr_instance_id == instance_id:
+                return (addr, port)
+                
+        # Instance not found
+        raise KeyError(f"Instance ID {instance_id} not found in address registry")
     
     def get_all_addresses(self) -> List[Tuple[int, str, int]]:
         """Get all cluster instance addresses."""

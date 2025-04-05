@@ -375,15 +375,27 @@ class MessageSender(IMessageSender):
                 time.time(), 0, instance_id
             )
         else:
-            for (
-                instance_id,
-                _,
-                _,
-            ) in UDPSingleton.get_cluster_instance_addresses():
-                if instance_id == self._instance_id:
-                    continue
-                pending_msg.pending_acks[instance_id] = PendingInstanceMessage(
-                    time.time(), 0, instance_id
+            try:
+                for (
+                    instance_id,
+                    _,
+                    _,
+                ) in UDPSingleton.get_cluster_instance_addresses():
+                    if instance_id == self._instance_id:
+                        continue
+                    pending_msg.pending_acks[instance_id] = PendingInstanceMessage(
+                        time.time(), 0, instance_id
+                    )
+            except Exception as e:
+                # If there's any issue getting addresses, just create a dummy pending ACK
+                # This will handle the case where no instances are registered yet
+                logger.warning(
+                    f"Error getting cluster addresses: {e}. Using fallback for pending ACKs."
+                )
+                # Use instance ID 999 as a fallback (we only need any valid entry)
+                dummy_instance_id = 999  
+                pending_msg.pending_acks[dummy_instance_id] = PendingInstanceMessage(
+                    time.time(), 0, dummy_instance_id
                 )
         self._pending_acks[message_id] = pending_msg
 
@@ -450,11 +462,23 @@ class MessageSender(IMessageSender):
             queued_msg = OutgoingPacket(packet)
             self._queue_outgoing_fn(queued_msg)
             return
-        addr, direct_port = UDPSingleton.get_cluster_instance_address(
-            instance_id
-        )
-        queued_msg = OutgoingPacket(packet, (addr, direct_port))
-        self._queue_outgoing_fn(queued_msg)
+            
+        try:
+            addr, direct_port = UDPSingleton.get_cluster_instance_address(
+                instance_id
+            )
+            queued_msg = OutgoingPacket(packet, (addr, direct_port))
+            self._queue_outgoing_fn(queued_msg)
+        except KeyError:
+            # Instance address not found yet in the registry
+            # Fall back to broadcasting instead
+            logger.warning(
+                "Instance %s not found in address registry, falling back to broadcast",
+                instance_id
+            )
+            queued_msg = OutgoingPacket(packet)
+            self._queue_outgoing_fn(queued_msg)
+            
         self._log_outgoing_queue_size()
     
     def _queue_outgoing_to_addr(self, packet, addr_and_port: Optional[Tuple[str, int]] = None):
@@ -569,10 +593,23 @@ class UDPMessageHandler(UDPBase):
 
             # Send acknowledgement if required
             if incoming_msg.require_ack:
-                addr, port = UDPSingleton.get_cluster_instance_address(
-                    incoming_msg.sender_instance_id
-                )
-                self._sender.send_ack(incoming_msg.message_id, (addr, port))
+                try:
+                    addr, port = UDPSingleton.get_cluster_instance_address(
+                        incoming_msg.sender_instance_id
+                    )
+                    self._sender.send_ack(incoming_msg.message_id, (addr, port))
+                except KeyError:
+                    # Instance address not found yet, use the address from the incoming message
+                    logger.debug(
+                        "Instance %s not found in address registry, using sender address %s for ACK",
+                        incoming_msg.sender_instance_id,
+                        incoming_msg.sender_addr
+                    )
+                    addr = incoming_msg.sender_addr
+                    # Use the default direct port
+                    from ..env_vars import EnvVars
+                    port = EnvVars.get_direct_listen_port()
+                    self._sender.send_ack(incoming_msg.message_id, (addr, port))
 
     def _outgoing_thread_callback(self):
         """

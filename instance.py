@@ -1,41 +1,53 @@
-from typing import TYPE_CHECKING
+"""
+Instance module - Defines the different instance types in the ComfyUI cluster.
+"""
+from typing import TYPE_CHECKING, Dict, List, Optional, Any, Tuple, Callable
+import asyncio
 import json
+import queue
+import threading
+from datetime import datetime
+
 from google.protobuf.json_format import ParseDict
 
-import queue
 from .log import logger
 from .protobuf.messages_pb2 import (
-    ClusterState,
-    ClusterMessageType,
-    ClusterDistributePrompt,
     ClusterRole,
-    ClusterRequestState,
+    ClusterMessageType,
+    ClusterAnnounceInstance,
+    ClusterDistributePrompt,
+    ClusterDistributeBufferDescriptor,
 )
-
-from .cluster import Cluster
-from .states.state_result import StateResult
 from .env_vars import EnvVars
 from .udp.queued import IncomingMessage, IncomingBuffer
+from .udp.expected_msg import BEGIN_BUFFER_EXPECTED_MSG_KEY, FANIN_EXPECTED_MSG_KEY, FANOUT_EXPECTED_MSG_KEY, GATHER_EXPECTED_MSG_KEY
 
 if TYPE_CHECKING:
+    from .cluster import Cluster
     from .instance_loop import InstanceLoop
-
-
-class QueuedMessage:
-    def __init__(self, msg_type_str: str, message, addr: str):
-        self.msg_type_str: str = msg_type_str
-        self.message = message
-        self.addr: str = addr
+    from .states.sync_handlers.emitter import Emitter
+    from .states.sync_handlers.receiver import Receiver
 
 
 class Instance:
+    """Base class for all instances in the cluster."""
+    
     def __init__(self, role: int, address: str):
+        """
+        Initialize an instance.
+        
+        Args:
+            role: The role of this instance (LEADER or FOLLOWER)
+            address: The network address of this instance
+        """
         self.role: int = role
         self.address: str = address
         self.all_accounted_for: bool = False
 
 
 class OtherInstance(Instance):
+    """Represents another instance in the cluster."""
+    
     def __init__(
         self,
         role: ClusterRole,
@@ -43,207 +55,588 @@ class OtherInstance(Instance):
         direct_port: int,
         instance_id: int,
     ):
+        """
+        Initialize another instance.
+        
+        Args:
+            role: The role of this instance (LEADER or FOLLOWER)
+            address: The network address of this instance
+            direct_port: The direct communication port of this instance
+            instance_id: The unique ID of this instance
+        """
         super().__init__(role, address)
-        self.direct_port = direct_port
-        self.instance_id = instance_id
+        self.direct_port: int = direct_port
+        self.instance_id: int = instance_id
 
 
 class ThisInstance(Instance):
+    """Represents this instance in the cluster with synchronization capabilities."""
+    
     def __init__(
         self,
-        cluster: Cluster,
+        cluster: "Cluster",
         instance_loop: "InstanceLoop",
         role: ClusterRole,
         address: str,
-        on_hot_reload,
+        on_hot_reload: Callable[[], None],
     ):
+        """
+        Initialize this instance.
+        
+        Args:
+            cluster: The cluster this instance belongs to
+            instance_loop: The instance loop managing this instance
+            role: The role of this instance (LEADER or FOLLOWER)
+            address: The network address of this instance
+            on_hot_reload: Callback for handling hot reloads
+        """
         super().__init__(role, address)
         self.cluster = cluster
-        self._msg_queue = queue.Queue()
         self._instance_loop = instance_loop
-        self._on_host_reload = on_hot_reload
-        # self._pending_state_request_msg: IncomingMessage | None = None
-        # self._queued_state_request_msgs: queue.Queue[IncomingMessage] = queue.Queue()
-
+        self._on_hot_reload = on_hot_reload
+        self._thread_lock = threading.Lock()
+        self._initialization_complete = False
+        self._sync_handler = None
+        
+        # Message and buffer handling callbacks
+        self._message_handler_callback = None
+        self._buffer_handler_callback = None
+        self._tick_callback = None
+        
+        # Hot reload support
+        self._check_for_hot_reload()
+    
+    def initialize(self) -> None:
+        """Initialize the instance after UDP handlers are set up."""
         if EnvVars.get_hot_reload():
-            from .states.signal_hot_reload_state import (
-                SignalHotReloadStateHandler,
-            )
-
-            self._signal_hot_reload_state_handler = (
-                SignalHotReloadStateHandler(self, self._on_host_reload)
-            )
-            self._current_state = ClusterState.INITIALIZE
+            logger.info("Hot reload enabled, sending signal")
+            self._handle_hot_reload_initialization()
         else:
-            from .states.announce_state_handler import (
-                AnnounceInstanceStateHandler,
+            logger.info("Starting instance announcement")
+            self._start_instance_announcement()
+            
+    def _check_for_hot_reload(self) -> None:
+        """Check if hot reload is enabled and handle it.
+        This is called during initialization, but defers the actual
+        announcement until UDP handlers are set up."""
+        # Don't do anything here, initialization is deferred
+    
+    def _handle_hot_reload_initialization(self) -> None:
+        """Initialize the hot reload process."""
+        # Implementation will be added in the hot reload refactoring
+        # For now, just start the normal announcement process
+        self._start_instance_announcement()
+    
+    def _start_instance_announcement(self) -> None:
+        """Start the instance announcement process."""
+        if not EnvVars.get_udp_broadcast():
+            # If UDP broadcast is disabled, use the configured hosts
+            self._handle_configured_hosts()
+        else:
+            # Otherwise announce this instance to the cluster
+            self._send_announce()
+    
+    def _handle_configured_hosts(self) -> None:
+        """Handle pre-configured hosts when UDP broadcast is disabled."""
+        from .udp.udp_base import UDPSingleton
+        
+        # Get addresses from UDPSingleton directly
+        for instance_id, instance_addr, direct_port in UDPSingleton.get_cluster_instance_addresses():
+            # Skip this instance
+            if instance_id == EnvVars.get_instance_index():
+                continue
+                
+            # Register the instance
+            self._register_instance(
+                ClusterRole.LEADER if instance_id == 0 else ClusterRole.FOLLOWER,
+                instance_id,
+                instance_addr,
+                direct_port,
+                True
+            )
+        
+        # Mark initialization as complete
+        self._complete_initialization()
+    
+    def _send_announce(self) -> None:
+        """Send an announcement message to the cluster."""
+        all_accounted_for = self.cluster.all_accounted_for()
+        
+        announce = ClusterAnnounceInstance()
+        announce.header.type = ClusterMessageType.ANNOUNCE
+        announce.role = self.role
+        announce.all_accounted_for = all_accounted_for
+        announce.direct_listening_port = EnvVars.get_direct_listen_port()
+
+        logger.info(
+            "Announcing instance '%s' (role=%s, all_accounted_for=%s, known_instances=%d/%d)",
+            EnvVars.get_instance_index(),
+            self.role,
+            all_accounted_for,
+            len(self.cluster.instances),
+            self.cluster.instance_count - 1
+        )
+        self.cluster.udp_message_handler.send_no_wait(announce)
+    
+    def _register_instance(
+        self,
+        role: ClusterRole,
+        instance_id: int,
+        instance_addr: str,
+        direct_listening_port: int,
+        all_accounted_for: bool,
+    ) -> OtherInstance:
+        """
+        Register another instance in the cluster.
+        
+        Args:
+            role: The role of the instance
+            instance_id: The unique ID of the instance
+            instance_addr: The network address of the instance
+            direct_listening_port: The direct communication port of the instance
+            all_accounted_for: Whether this instance has all other instances registered
+            
+        Returns:
+            The registered instance
+        """
+        other_instance = None
+
+        if role == ClusterRole.LEADER:
+            other_instance = OtherLeaderInstance(
+                role, instance_addr, direct_listening_port, instance_id
+            )
+        else:
+            other_instance = OtherFollowerInstance(
+                role, instance_addr, direct_listening_port, instance_id
             )
 
-            self._current_state_handler = AnnounceInstanceStateHandler(self)
-            self._current_state = ClusterState.POPULATING
-
+        other_instance.all_accounted_for = all_accounted_for
+        self.cluster.instances[instance_id] = other_instance
+        return other_instance
+    
+    def _complete_initialization(self) -> None:
+        """Mark initialization as complete and update instance addresses."""
+        if self._initialization_complete:
+            return
+            
+        logger.info("Initialization complete - all instances connected")
+        self._initialization_complete = True
+        
+        # Make sure the UDP system has all instance addresses
+        from .udp.udp_base import UDPSingleton
+        
+        # Rebuild the complete address list to ensure consistency
+        addresses = []
+        
+        # Add this instance
+        addresses.append(
+            (EnvVars.get_instance_index(), 
+             EnvVars.get_listen_address(), 
+             EnvVars.get_direct_listen_port())
+        )
+        
+        # Add all other registered instances
+        addresses.extend(
+            (instance_id, instance.address, instance.direct_port)
+            for instance_id, instance in self.cluster.instances.items()
+        )
+        
+        # Sort by instance ID for consistency
+        addresses.sort(key=lambda x: x[0])
+        
+        # Log the final address list for debugging
+        logger.info("Final cluster instance addresses: %s", addresses)
+        
+        # Update the UDP singleton with all addresses
+        UDPSingleton.set_cluster_instance_addresses(addresses)
+        
+        # Send final announcement with all_accounted_for=True to help other instances complete
+        # This helps ensure all instances transition to the IDLE state together
+        if EnvVars.get_udp_broadcast():
+            # Force an immediate announcement with all_accounted_for=True
+            announce = ClusterAnnounceInstance()
+            announce.header.type = ClusterMessageType.ANNOUNCE
+            announce.role = self.role
+            announce.all_accounted_for = True
+            announce.direct_listening_port = EnvVars.get_direct_listen_port()
+            
+            logger.info("Sending final announcement (initialization complete)")
+            self.cluster.udp_message_handler.send_no_wait(announce)
+            
+            # Send it twice to reduce chance of packet loss
+            self.cluster.udp_message_handler.send_no_wait(announce)
+    
     def buffer_queue_empty(self) -> bool:
+        """Check if the buffer queue is empty."""
         return self._instance_loop.buffer_queue_empty()
+    
+    async def handle_message(self, incoming_message: IncomingMessage) -> None:
+        """
+        Handle an incoming message.
+        
+        Args:
+            incoming_message: The incoming message to handle
+        """
+        # Handle initialization messages
+        if not self._initialization_complete:
+            if incoming_message.msg_type == ClusterMessageType.ANNOUNCE:
+                await self._handle_announce_message(incoming_message)
+                return
+                
+            # Ignore other messages during initialization
+            return
+        
+        # Handle distribute prompt messages
+        if incoming_message.msg_type == ClusterMessageType.DISTRIBUTE_PROMPT:
+            await self._handle_distribute_prompt(incoming_message)
+            return
+            
+        # Delegate to sync handler if available
+        if self._message_handler_callback:
+            await self._message_handler_callback(None, incoming_message)
+    
+    async def _handle_announce_message(self, incoming_message: IncomingMessage) -> None:
+        """
+        Handle an announce message during initialization.
+        
+        Args:
+            incoming_message: The announce message to handle
+        """
+        announce_instance = ParseDict(
+            incoming_message.message, ClusterAnnounceInstance()
+        )
+        
+        # Check if we already know about this instance
+        is_new_instance = incoming_message.sender_instance_id not in self.cluster.instances
+        
+        if is_new_instance:
+            # Register the new instance
+            logger.info(
+                "New cluster instance '%s' discovered at %s",
+                incoming_message.sender_instance_id,
+                incoming_message.sender_addr,
+            )
+            
+            other_instance = self._register_instance(
+                announce_instance.role,
+                incoming_message.sender_instance_id,
+                incoming_message.sender_addr,
+                announce_instance.direct_listening_port,
+                announce_instance.all_accounted_for,
+            )
+        else:
+            # Update the existing instance
+            other_instance = self.cluster.instances[incoming_message.sender_instance_id]
+            other_instance.all_accounted_for = announce_instance.all_accounted_for
+            
+        # Always update UDP addresses after receiving an announcement
+        from .udp.udp_base import UDPSingleton
+        
+        # Get current addresses and add new instance
+        addresses = []
+        
+        # Add this instance first
+        addresses.append(
+            (EnvVars.get_instance_index(), 
+             EnvVars.get_listen_address(), 
+             EnvVars.get_direct_listen_port())
+        )
+        
+        # Add all other instances
+        addresses.extend(
+            (instance_id, instance.address, instance.direct_port)
+            for instance_id, instance in self.cluster.instances.items()
+        )
+        
+        # Sort by instance ID for consistency
+        addresses.sort(key=lambda x: x[0])
+        
+        # Update the UDP singleton with all addresses
+        UDPSingleton.set_cluster_instance_addresses(addresses)
+        
+        # Log current state
+        logger.debug(
+            "After announcement: have %d/%d instances, all_accounted_for=%s", 
+            len(self.cluster.instances), 
+            self.cluster.instance_count - 1,
+            self.cluster.all_accounted_for()
+        )
+        
+        # Check if all instances are accounted for
+        if self.cluster.all_accounted_for():
+            # If the other instance says it has all instances, or if we just found the last one
+            if announce_instance.all_accounted_for or is_new_instance:
+                # If we have all instances, mark as complete immediately
+                logger.info("All cluster instances discovered, completing initialization")
+                self._complete_initialization()
+                
+            # If we need to wait for final confirmation, this is handled in handle_state
+    
+    async def _handle_distribute_prompt(self, incoming_message: IncomingMessage) -> None:
+        """
+        Handle a distribute prompt message.
+        
+        Args:
+            incoming_message: The distribute prompt message to handle
+        """
+        distribute_prompt = ParseDict(
+            incoming_message.message, ClusterDistributePrompt()
+        )
 
-    def _build_url(self, addr: str, endpoint: str):
-        return f"http://{addr}:{EnvVars.get_comfy_port()}/{endpoint}"
+        prompt_json = json.loads(distribute_prompt.prompt)
+        json_data = {
+            "prompt": prompt_json["output"],
+            "extra_data": {"extra_pnginfo": prompt_json["workflow"]},
+            "client_id": datetime.now().strftime("%Y%m%d_%H%M%S"),
+        }
 
-    async def distribute_prompt(self, prompt_json):
-        logger.info("Received request to distribute prompt")
-
-        # while self._current_state != ClusterState.IDLE:
-        #     logger.info("Instance is in state: %s, waiting for idle...", self._current_state)
-        #     await asyncio.sleep(0.5)
-
+        url = f"http://localhost:{EnvVars.get_comfy_port()}/prompt"
+        try:
+            import requests
+            response = requests.post(url, json=json_data)
+            response.raise_for_status()
+            logger.info("Successfully posted prompt to local ComfyUI instance")
+        except Exception as e:
+            logger.error(f"Error posting prompt: {str(e)}")
+    
+    async def handle_buffer(self, incoming_buffer: IncomingBuffer) -> None:
+        """
+        Handle an incoming buffer.
+        
+        Args:
+            incoming_buffer: The incoming buffer to handle
+        """
+        # Skip buffer handling during initialization
+        if not self._initialization_complete:
+            return
+            
+        # Delegate to sync handler if available
+        if self._buffer_handler_callback:
+            await self._buffer_handler_callback(None, incoming_buffer)
+    
+    async def handle_state(self) -> None:
+        """Process periodic state updates."""
+        # Skip state handling during initialization
+        if not self._initialization_complete:
+            # If using UDP broadcast, send announcements periodically
+            if EnvVars.get_udp_broadcast():
+                # Check if we need to keep announcing
+                if self.cluster.all_accounted_for():
+                    # We found all other instances, but they may not have found us yet
+                    # Continue announcing with all_accounted_for=True to help others complete
+                    self._send_announce()
+                    
+                    # Check if all instances have reported being all accounted for
+                    all_instances_accounted_for = all(
+                        instance.all_accounted_for
+                        for instance in self.cluster.instances.values()
+                    )
+                    
+                    if all_instances_accounted_for:
+                        # Everyone is connected, mark as complete
+                        self._complete_initialization()
+                else:
+                    # Still searching for other instances
+                    self._send_announce()
+                    
+                # Rate limit announcements
+                await asyncio.sleep(2)
+            return
+            
+        # Delegate to sync handler if available
+        if self._tick_callback:
+            await self._tick_callback()
+    
+    def _register_sync_callbacks(
+        self, 
+        message_callback: Callable, 
+        buffer_callback: Callable, 
+        tick_callback: Callable
+    ) -> None:
+        """
+        Register callbacks for synchronization.
+        
+        Args:
+            message_callback: Callback for handling messages
+            buffer_callback: Callback for handling buffers
+            tick_callback: Callback for periodic processing
+        """
+        self._message_handler_callback = message_callback
+        self._buffer_handler_callback = buffer_callback
+        self._tick_callback = tick_callback
+    
+    def _clear_sync_callbacks(self) -> None:
+        """Clear all synchronization callbacks."""
+        self._message_handler_callback = None
+        self._buffer_handler_callback = None
+        self._tick_callback = None
+    
+    async def distribute_prompt(self, prompt_json: Dict) -> None:
+        """
+        Distribute a prompt to all instances in the cluster.
+        
+        Args:
+            prompt_json: The prompt to distribute
+        """
+        logger.info("Distributing prompt to cluster")
+        
         message = ClusterDistributePrompt()
         message.header.type = ClusterMessageType.DISTRIBUTE_PROMPT
         message.header.require_ack = True
         message.prompt = json.dumps(prompt_json)
-        await self.cluster.udp_message_handler.send_and_wait_thread_safe(
-            message
-        )
-
-    async def change_cluster_state(self, state: ClusterState):
-        result = (
-            await self.cluster.udp_message_handler.request_state_thread_safe(
-                state
-            )
-        )
-        if not result.success:
-            return
-
-    # async def _setup_sync_state(self) -> object:
-    #     from .states.sync_state import SyncStateHandler
-    #     sync_state_handler = SyncStateHandler(self)
-    #     self._current_state_handler = sync_state_handler
-    #     self._current_state = ClusterState.EXECUTING
-    #     return sync_state_handler
-
-    async def broadcast_tensor(self, tensor):
-        # sync_state_handler = await self._setup_sync_state()
-        return await self._current_state_handler.begin_tensor_broadcast(tensor)
-
-    async def send_tensor_to_leader(self, tensor):
-        # sync_state_handler = await self._setup_sync_state()
-        return await self._current_state_handler.begin_sender(tensor, [0])
-
-    async def receive_tensor_fanin(self, tensor):
-        # sync_state_handler = await self._setup_sync_state()
-        return await self._current_state_handler.begin_fanin_receiver(tensor)
-
-    async def fanout_tensor(self, tensor):
-        # sync_state_handler = await self._setup_sync_state()
-        return await self._current_state_handler.begin_fanout_emitter(tensor)
-
-    async def receive_tensor_fanout(self):
-        # sync_state_handler = await self._setup_sync_state()
-        return await self._current_state_handler.begin_fanout_receiver()
-
-    async def gather_tensors(self, tensor):
-        # sync_state_handler = await self._setup_sync_state()
-        return await self._current_state_handler.begin_gathering_tensors(
-            tensor
-        )
-
-    async def _change_state(self, incoming_msg: IncomingMessage):
-        state_request = ParseDict(incoming_msg.message, ClusterRequestState())
-        if state_request.state == ClusterState.IDLE:
-            from .states.idle_state import IdleStateHandler
-
-            self._current_state = state_request.state
-            self._current_state_handler = IdleStateHandler(self)
-        elif state_request.state == ClusterState.EXECUTING:
-            from .states.sync_handlers import SyncStateHandler
-
-            self._current_state = state_request.state
-            self._current_state_handler = SyncStateHandler(self)
-        result = (
-            await self.cluster.udp_message_handler.resolve_state_thread_safe(
-                state_request,
-                incoming_msg.message_id,
-                incoming_msg.sender_instance_id,
-            )
-        )
-        if not result.success:
-            return result
-
-    def handle_state_result(self, state_result: StateResult):
-        # logger.info('Tick handle_state_result')
-        if state_result is not None and state_result.next_state is not None:
-            if state_result.next_state != self._current_state:
-                logger.debug(
-                    "State transition: %s -> %s",
-                    self._current_state,
-                    state_result.next_state,
-                )
-                self._current_state = state_result.next_state
-                self._current_state_handler = state_result.next_state_handler
-
-    async def handle_state(self):
-        if not self._current_state_handler.check_current_state(
-            self._current_state
-        ):
-            return
-        # await self.poll_state_requests()
-        state_result: StateResult = (
-            await self._current_state_handler.handle_state(self._current_state)
-        )
-        self.handle_state_result(state_result)
-
-    async def handle_buffer(self, incoming_buffer: IncomingBuffer):
-        if not self._current_state_handler.check_current_state(
-            self._current_state
-        ):
-            return
-        # await self.poll_state_requests()
-        state_result = await self._current_state_handler.handle_buffer(
-            self._current_state, incoming_buffer
-        )
-        self.handle_state_result(state_result)
-
-    async def handle_message(self, incoming_message: IncomingMessage):
-        if incoming_message.msg_type == ClusterMessageType.REQUEST_STATE:
-            await self._change_state(incoming_message)
-            return
-            # self._queued_state_request_msgs.put_nowait(incoming_message)
-
-        if not self._current_state_handler.check_message_type(
-            incoming_message.msg_type
-        ):
-            return
-
-        # await self.poll_state_requests()
-        state_result = await self._current_state_handler.handle_message(
-            self._current_state, incoming_message
-        )
-        self.handle_state_result(state_result)
+        await self.cluster.udp_message_handler.send_and_wait_thread_safe(message)
+    
+    async def broadcast_tensor(self, tensor: Any) -> Any:
+        """
+        Broadcast a tensor to all instances in the cluster.
+        
+        Args:
+            tensor: The tensor to broadcast
+            
+        Returns:
+            The broadcast tensor
+        """
+        # Lazy load to avoid circular imports
+        if not hasattr(self, '_sync_handler') or self._sync_handler is None:
+            from .states.sync_state import SyncStateHandler
+            self._sync_handler = SyncStateHandler(self)
+            
+        return await self._sync_handler.begin_tensor_broadcast(tensor)
+    
+    async def send_tensor_to_leader(self, tensor: Any) -> Any:
+        """
+        Send a tensor to the leader instance.
+        
+        Args:
+            tensor: The tensor to send
+            
+        Returns:
+            The sent tensor
+        """
+        # Lazy load to avoid circular imports
+        if not hasattr(self, '_sync_handler') or self._sync_handler is None:
+            from .states.sync_state import SyncStateHandler
+            self._sync_handler = SyncStateHandler(self)
+            
+        return await self._sync_handler.begin_sender(tensor, [0])
+    
+    async def receive_tensor_fanin(self, tensor: Any) -> Any:
+        """
+        Receive a tensor from a fan-in operation.
+        
+        Args:
+            tensor: The tensor to combine with received tensor
+            
+        Returns:
+            The combined tensor
+        """
+        # Lazy load to avoid circular imports
+        if not hasattr(self, '_sync_handler') or self._sync_handler is None:
+            from .states.sync_state import SyncStateHandler
+            self._sync_handler = SyncStateHandler(self)
+            
+        return await self._sync_handler.begin_fanin_receiver(tensor)
+    
+    async def fanout_tensor(self, tensor: Any) -> Any:
+        """
+        Fan out a tensor to all instances in the cluster.
+        
+        Args:
+            tensor: The tensor to fan out
+            
+        Returns:
+            The portion of the tensor for this instance
+        """
+        # Lazy load to avoid circular imports
+        if not hasattr(self, '_sync_handler') or self._sync_handler is None:
+            from .states.sync_state import SyncStateHandler
+            self._sync_handler = SyncStateHandler(self)
+            
+        return await self._sync_handler.begin_fanout_emitter(tensor)
+    
+    async def receive_tensor_fanout(self) -> Any:
+        """
+        Receive a tensor from a fan-out operation.
+        
+        Returns:
+            The received tensor
+        """
+        # Lazy load to avoid circular imports
+        if not hasattr(self, '_sync_handler') or self._sync_handler is None:
+            from .states.sync_state import SyncStateHandler
+            self._sync_handler = SyncStateHandler(self)
+            
+        return await self._sync_handler.begin_fanout_receiver()
+    
+    async def gather_tensors(self, tensor: Any) -> Any:
+        """
+        Gather tensors from all instances in the cluster.
+        
+        Args:
+            tensor: The tensor to gather
+            
+        Returns:
+            The gathered tensors
+        """
+        # Lazy load to avoid circular imports
+        if not hasattr(self, '_sync_handler') or self._sync_handler is None:
+            from .states.sync_state import SyncStateHandler
+            self._sync_handler = SyncStateHandler(self)
+            
+        return await self._sync_handler.begin_gathering_tensors(tensor)
 
 
 class ThisLeaderInstance(ThisInstance):
+    """Represents this instance as a leader in the cluster."""
+    
     def __init__(
         self,
-        cluster: Cluster,
+        cluster: "Cluster",
         instance_loop: "InstanceLoop",
         role: ClusterRole,
         address: str,
-        on_hot_reload,
+        on_hot_reload: Callable[[], None],
     ):
+        """
+        Initialize this leader instance.
+        
+        Args:
+            cluster: The cluster this instance belongs to
+            instance_loop: The instance loop managing this instance
+            role: The role of this instance (LEADER)
+            address: The network address of this instance
+            on_hot_reload: Callback for handling hot reloads
+        """
         super().__init__(cluster, instance_loop, role, address, on_hot_reload)
 
 
 class ThisFollowerInstance(ThisInstance):
+    """Represents this instance as a follower in the cluster."""
+    
     def __init__(
         self,
-        cluster: Cluster,
+        cluster: "Cluster",
         instance_loop: "InstanceLoop",
         role: ClusterRole,
         address: str,
-        on_hot_reload,
+        on_hot_reload: Callable[[], None],
     ):
+        """
+        Initialize this follower instance.
+        
+        Args:
+            cluster: The cluster this instance belongs to
+            instance_loop: The instance loop managing this instance
+            role: The role of this instance (FOLLOWER)
+            address: The network address of this instance
+            on_hot_reload: Callback for handling hot reloads
+        """
         super().__init__(cluster, instance_loop, role, address, on_hot_reload)
 
 
 class OtherLeaderInstance(OtherInstance):
+    """Represents another leader instance in the cluster."""
+    
     def __init__(
         self,
         role: ClusterRole,
@@ -251,10 +644,21 @@ class OtherLeaderInstance(OtherInstance):
         direct_port: int,
         instance_id: int,
     ):
+        """
+        Initialize another leader instance.
+        
+        Args:
+            role: The role of this instance (LEADER)
+            address: The network address of this instance
+            direct_port: The direct communication port of this instance
+            instance_id: The unique ID of this instance
+        """
         super().__init__(role, address, direct_port, instance_id)
 
 
 class OtherFollowerInstance(OtherInstance):
+    """Represents another follower instance in the cluster."""
+    
     def __init__(
         self,
         role: ClusterRole,
@@ -262,4 +666,13 @@ class OtherFollowerInstance(OtherInstance):
         direct_port: int,
         instance_id: int,
     ):
+        """
+        Initialize another follower instance.
+        
+        Args:
+            role: The role of this instance (FOLLOWER)
+            address: The network address of this instance
+            direct_port: The direct communication port of this instance
+            instance_id: The unique ID of this instance
+        """
         super().__init__(role, address, direct_port, instance_id)
