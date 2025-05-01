@@ -51,10 +51,13 @@ class SubgraphExpander:
         # Find the output node
         output_node = SubgraphExpander._find_output_node(node_mapping, subgraph, end_node_id)
 
+        result = (output_node.out(0),)
+        expanded_graph = graph.finalize()
+
         # Return the expansion result
         return {
-            "result": (output_node.out(0),),
-            "expand": graph.finalize()
+            "result": result,
+            "expand": expanded_graph
         }
 
     @staticmethod
