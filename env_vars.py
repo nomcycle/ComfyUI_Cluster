@@ -74,7 +74,7 @@ class EnvVars:
                 for i, h in enumerate(hostnames.split(",")):
                     hostname, port = h.split(":")
                     cls._udp_hostnames.append(
-                        (i, (hostname.strip(), int(port.strip())))
+                        (i, hostname.strip(), int(port.strip()))
                     )
 
         # Parse single host flag
