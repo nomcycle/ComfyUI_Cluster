@@ -8,28 +8,74 @@ Follows fail-fast principles and single responsibility principle.
 
 import logging
 import time
-from typing import Dict, List, Optional, Tuple, Set
+from typing import Dict, List, Optional, Tuple, Set, Protocol, Callable, runtime_checkable
 
 from .exceptions import ValidationError, ResourceNotFoundError
 from .models import InstanceInfo, RegistrationResponse
+from .models import validate_address, validate_port, validate_instance_id, validate_cluster_id, validate_role
 
 logger = logging.getLogger("comfyui-cluster-stun.cluster")
+
+@runtime_checkable
+class TimeProvider(Protocol):
+    """Protocol for time providers."""
+    
+    def __call__(self) -> float:
+        """Get the current time."""
+        ...
+
+class SystemTimeProvider:
+    """Provides system time."""
+    
+    def __call__(self) -> float:
+        """
+        Get the current system time.
+        
+        Returns:
+            Current time as a float
+        """
+        return time.time()
+
+def validate_max_age(max_age_seconds: int) -> int:
+    """
+    Validate the maximum age parameter.
+    
+    Args:
+        max_age_seconds: Maximum age in seconds
+        
+    Returns:
+        Validated max age
+        
+    Raises:
+        ValidationError: If max_age_seconds is invalid
+    """
+    if max_age_seconds <= 0:
+        msg = f"Invalid max age: {max_age_seconds}"
+        logger.error(msg)
+        raise ValidationError(msg)
+    return max_age_seconds
 
 class ClusterState:
     """
     In-memory implementation of cluster state management.
     Strictly follows fail-fast principles.
     """
-    def __init__(self, cluster_id: str):
-        if not cluster_id:
-            msg = "Cluster ID cannot be empty"
-            logger.error(msg)
-            raise ValidationError(msg)
+    def __init__(self, cluster_id: str, time_provider: Optional[TimeProvider] = None):
+        """
+        Initialize a new cluster state.
+        
+        Args:
+            cluster_id: ID of the cluster
+            time_provider: Provider for timestamps (for testing)
             
-        self.cluster_id = cluster_id
+        Raises:
+            ValidationError: If cluster_id is empty
+        """
+        self.cluster_id = validate_cluster_id(cluster_id)
         # instance_id -> (address, port, role, last_ping)
         self.instances: Dict[int, Tuple[str, int, str, float]] = {}
-        self.last_change_time: float = time.time()
+        self.time_provider = time_provider or SystemTimeProvider()
+        self.last_change_time: float = self.time_provider()
     
     def register_instance(self, instance_id: int, address: str, port: int, role: str) -> None:
         """
@@ -44,28 +90,19 @@ class ClusterState:
         Raises:
             ValidationError: If any of the parameters are invalid
         """
-        if instance_id < 0:
-            msg = f"Invalid instance ID: {instance_id}"
-            logger.error(msg)
-            raise ValidationError(msg)
-            
-        if not address:
-            msg = "Instance address cannot be empty"
-            logger.error(msg)
-            raise ValidationError(msg)
-            
-        if not 1 <= port <= 65535:
-            msg = f"Invalid port number: {port}"
-            logger.error(msg)
-            raise ValidationError(msg)
-            
+        # Validate parameters
+        instance_id = validate_instance_id(instance_id)
+        address = validate_address(address)
+        port = validate_port(port)
+        
         if not role:
             msg = "Instance role cannot be empty"
             logger.error(msg)
             raise ValidationError(msg)
-            
-        self.instances[instance_id] = (address, port, role, time.time())
-        self.last_change_time = time.time()
+        
+        # Store instance
+        self.instances[instance_id] = (address, port, role, self.time_provider())
+        self.last_change_time = self.time_provider()
         logger.info(f"Registered instance {instance_id} in cluster {self.cluster_id}")
     
     def remove_instance(self, instance_id: int) -> None:
@@ -80,7 +117,7 @@ class ClusterState:
             return
             
         del self.instances[instance_id]
-        self.last_change_time = time.time()
+        self.last_change_time = self.time_provider()
         logger.info(f"Removed instance {instance_id} from cluster {self.cluster_id}")
     
     def update_heartbeat(self, instance_id: int) -> bool:
@@ -97,7 +134,7 @@ class ClusterState:
             return False
         
         address, port, role, _ = self.instances[instance_id]
-        self.instances[instance_id] = (address, port, role, time.time())
+        self.instances[instance_id] = (address, port, role, self.time_provider())
         return True
     
     def get_instances(self) -> List[InstanceInfo]:
@@ -131,12 +168,9 @@ class ClusterState:
         Raises:
             ValidationError: If max_age_seconds is invalid
         """
-        if max_age_seconds <= 0:
-            msg = f"Invalid max age: {max_age_seconds}"
-            logger.error(msg)
-            raise ValidationError(msg)
+        max_age_seconds = validate_max_age(max_age_seconds)
             
-        current_time = time.time()
+        current_time = self.time_provider()
         stale_instances = [
             instance_id for instance_id, (_, _, _, last_seen) in self.instances.items()
             if (current_time - last_seen) > max_age_seconds
@@ -159,14 +193,49 @@ class ClusterState:
         """
         return self.last_change_time
 
+class ClusterFactory:
+    """Factory for creating cluster states."""
+    
+    def __init__(self, time_provider: Optional[TimeProvider] = None):
+        """
+        Initialize a new cluster factory.
+        
+        Args:
+            time_provider: Provider for timestamps (for testing)
+        """
+        self.time_provider = time_provider
+    
+    def create_cluster(self, cluster_id: str) -> ClusterState:
+        """
+        Create a new cluster state.
+        
+        Args:
+            cluster_id: ID of the cluster
+            
+        Returns:
+            Newly created ClusterState
+            
+        Raises:
+            ValidationError: If cluster_id is empty
+        """
+        return ClusterState(cluster_id, self.time_provider)
 
 class ClusterRegistry:
     """
     Registry for managing multiple cluster states.
     Provides a central point for accessing and managing clusters.
     """
-    def __init__(self):
+    def __init__(self, cluster_factory: Optional[ClusterFactory] = None, time_provider: Optional[TimeProvider] = None):
+        """
+        Initialize a new cluster registry.
+        
+        Args:
+            cluster_factory: Factory for creating clusters (for testing)
+            time_provider: Provider for timestamps (for testing)
+        """
         self.clusters: Dict[str, ClusterState] = {}
+        self.cluster_factory = cluster_factory or ClusterFactory(time_provider)
+        self.time_provider = time_provider or SystemTimeProvider()
     
     def get_cluster(self, cluster_id: str) -> Optional[ClusterState]:
         """
@@ -181,11 +250,7 @@ class ClusterRegistry:
         Raises:
             ValidationError: If cluster_id is empty
         """
-        if not cluster_id:
-            msg = "Cluster ID cannot be empty"
-            logger.error(msg)
-            raise ValidationError(msg)
-            
+        cluster_id = validate_cluster_id(cluster_id)
         return self.clusters.get(cluster_id)
     
     def create_cluster(self, cluster_id: str) -> ClusterState:
@@ -201,16 +266,13 @@ class ClusterRegistry:
         Raises:
             ValidationError: If cluster_id is empty
         """
-        if not cluster_id:
-            msg = "Cluster ID cannot be empty"
-            logger.error(msg)
-            raise ValidationError(msg)
+        cluster_id = validate_cluster_id(cluster_id)
             
         if cluster_id in self.clusters:
             logger.warning(f"Cluster {cluster_id} already exists, returning existing instance")
             return self.clusters[cluster_id]
             
-        self.clusters[cluster_id] = ClusterState(cluster_id)
+        self.clusters[cluster_id] = self.cluster_factory.create_cluster(cluster_id)
         logger.info(f"Created new cluster state for {cluster_id}")
         return self.clusters[cluster_id]
     
@@ -227,10 +289,7 @@ class ClusterRegistry:
         Raises:
             ValidationError: If cluster_id is empty
         """
-        if not cluster_id:
-            msg = "Cluster ID cannot be empty"
-            logger.error(msg)
-            raise ValidationError(msg)
+        cluster_id = validate_cluster_id(cluster_id)
             
         if cluster_id not in self.clusters:
             return self.create_cluster(cluster_id)
@@ -267,10 +326,7 @@ class ClusterRegistry:
         Raises:
             ValidationError: If max_age_seconds is invalid
         """
-        if max_age_seconds <= 0:
-            msg = f"Invalid max age: {max_age_seconds}"
-            logger.error(msg)
-            raise ValidationError(msg)
+        max_age_seconds = validate_max_age(max_age_seconds)
             
         result: Dict[str, List[int]] = {}
         for cluster_id, cluster in self.clusters.items():
@@ -302,6 +358,20 @@ class ClusterRegistry:
         Raises:
             ValidationError: If any parameters are invalid
         """
+        # Validate parameters (will be re-validated in respective methods,
+        # but we do it here for explicit API validation)
+        instance_id = validate_instance_id(instance_id)
+        address = validate_address(address)
+        port = validate_port(port)
+        
+        if not role:
+            msg = "Instance role cannot be empty"
+            logger.error(msg)
+            raise ValidationError(msg)
+            
+        cluster_id = validate_cluster_id(cluster_id)
+        
+        # Get or create cluster and register instance
         cluster = self.get_or_create_cluster(cluster_id)
         
         cluster.register_instance(

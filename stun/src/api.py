@@ -8,7 +8,7 @@ Implements simplified patterns while maintaining fail-fast principles.
 
 import logging
 import time
-from typing import Dict, List
+from typing import Dict, List, Callable, Awaitable, Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -29,37 +29,13 @@ from .models import (
 
 logger = logging.getLogger("comfyui-cluster-stun.api")
 
-
-def create_app(
-    auth_provider: KeyBasedAuthProvider,
-    cluster_registry: ClusterRegistry,
-) -> FastAPI:
+def setup_exception_handlers(app: FastAPI) -> None:
     """
-    Create and configure the FastAPI application.
+    Set up exception handlers for the application.
     
     Args:
-        auth_provider: Provider for authentication
-        cluster_registry: Registry for cluster state management
-        
-    Returns:
-        Configured FastAPI application
+        app: FastAPI application
     """
-    app = FastAPI(
-        title="ComfyUI Cluster STUN Server",
-        description="STUN server for ComfyUI Cluster instance registration",
-        version="0.1.0",
-    )
-    
-    # Add CORS middleware
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
-    
-    # Add exception handlers
     @app.exception_handler(ValidationError)
     async def validation_exception_handler(request: Request, exc: ValidationError):
         logger.warning(f"Validation error: {str(exc)}")
@@ -95,23 +71,59 @@ def create_app(
             status_code=500,
             content={"detail": "Internal server error"},
         )
+
+def setup_middleware(app: FastAPI) -> None:
+    """
+    Set up middleware for the application.
     
-    # Create router
+    Args:
+        app: FastAPI application
+    """
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+async def cleanup_stale_instances(
+    cluster_registry: ClusterRegistry,
+    max_age_seconds: int = 60
+) -> None:
+    """
+    Remove instances that haven't been seen recently.
+    
+    Args:
+        cluster_registry: Registry for cluster state management
+        max_age_seconds: Maximum age in seconds before an instance is considered stale
+    """
+    try:
+        removed = cluster_registry.cleanup_stale_instances(max_age_seconds)
+        if removed:
+            for cluster_id, instances in removed.items():
+                logger.info(f"Removed stale instances from cluster {cluster_id}: {instances}")
+    except Exception as e:
+        logger.error(f"Error cleaning up stale instances: {str(e)}", exc_info=True)
+
+def create_router(
+    auth_provider: KeyBasedAuthProvider,
+    cluster_registry: ClusterRegistry,
+) -> APIRouter:
+    """
+    Create the API router with all routes.
+    
+    Args:
+        auth_provider: Provider for authentication
+        cluster_registry: Registry for cluster state management
+        
+    Returns:
+        Configured APIRouter
+    """
     router = APIRouter()
     
     # Get authentication dependency
     authenticate_cluster = auth_provider.get_security_dependency()
-    
-    # Background tasks
-    async def cleanup_stale_instances(max_age_seconds: int = 60):
-        """Remove instances that haven't been seen recently."""
-        try:
-            removed = cluster_registry.cleanup_stale_instances(max_age_seconds)
-            if removed:
-                for cluster_id, instances in removed.items():
-                    logger.info(f"Removed stale instances from cluster {cluster_id}: {instances}")
-        except Exception as e:
-            logger.error(f"Error cleaning up stale instances: {str(e)}", exc_info=True)
     
     @router.post("/register-instance")
     async def register_instance(
@@ -132,7 +144,10 @@ def create_app(
         )
         
         # Trigger cleanup of stale instances
-        background_tasks.add_task(cleanup_stale_instances)
+        background_tasks.add_task(
+            cleanup_stale_instances,
+            cluster_registry
+        )
         
         return response
     
@@ -171,7 +186,7 @@ def create_app(
     async def get_clusters(
         admin_cluster_id: str,
         authenticated: bool = Depends(authenticate_cluster)
-    ) -> Dict[str, object]:
+    ) -> Dict[str, Any]:
         """
         Get all registered clusters.
         
@@ -214,7 +229,42 @@ def create_app(
             clusters_active=cluster_registry.get_cluster_count()
         )
     
-    # Include router
+    return router
+
+def create_app(
+    auth_provider: KeyBasedAuthProvider,
+    cluster_registry: ClusterRegistry,
+    title: str = "ComfyUI Cluster STUN Server",
+    description: str = "STUN server for ComfyUI Cluster instance registration",
+    version: str = "0.1.0"
+) -> FastAPI:
+    """
+    Create and configure the FastAPI application.
+    
+    Args:
+        auth_provider: Provider for authentication
+        cluster_registry: Registry for cluster state management
+        title: API title
+        description: API description
+        version: API version
+        
+    Returns:
+        Configured FastAPI application
+    """
+    app = FastAPI(
+        title=title,
+        description=description,
+        version=version,
+    )
+    
+    # Set up middleware
+    setup_middleware(app)
+    
+    # Set up exception handlers
+    setup_exception_handlers(app)
+    
+    # Create and include router
+    router = create_router(auth_provider, cluster_registry)
     app.include_router(router)
     
     return app
