@@ -77,7 +77,7 @@ stun-server --host 127.0.0.1 --port 8000 --log-level DEBUG
 - `POST /register-instance`: Register an instance
 - `GET /instances/{cluster_id}`: Get all instances for a cluster
 - `POST /heartbeat/{cluster_id}/{instance_id}`: Update heartbeat for an instance
-- `GET /clusters/{admin_cluster_id}`: Get all registered clusters
+- `GET /clusters`: Get all registered clusters
 - `DELETE /instance/{cluster_id}/{instance_id}`: Manually remove an instance
 - `GET /health`: Health check endpoint (no authentication required)
 

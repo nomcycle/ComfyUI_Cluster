@@ -182,16 +182,10 @@ def create_router(
             
         return HeartbeatResponse()
     
-    @router.get("/clusters/{admin_cluster_id}")
-    async def get_clusters(
-        admin_cluster_id: str,
-        authenticated: bool = Depends(authenticate_cluster)
-    ) -> Dict[str, Any]:
+    @router.get("/clusters")
+    async def get_clusters() -> Dict[str, Any]:
         """
         Get all registered clusters.
-        
-        The admin_cluster_id parameter is used for authentication and should be a valid cluster ID.
-        This adds consistency with other endpoints while maintaining the same functionality.
         """
         return {
             "clusters": cluster_registry.get_all_cluster_ids(),

@@ -11,7 +11,7 @@
 	# Reverse proxy to STUN server
 	reverse_proxy localhost:8089 {
 		health_uri /health
-		health_interval 30s
+		health_interval 10s
 		health_timeout 5s
 		health_status 200
 	}

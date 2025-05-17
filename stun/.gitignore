@@ -9,3 +9,4 @@ __pycache__
 .venv
 build
 caddy/certs
+comfyui_cluster_sun.egg-info

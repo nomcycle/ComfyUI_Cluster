@@ -208,19 +208,34 @@ class KeyBasedAuthProvider:
         """
         async def authenticate_cluster(
             cluster_id: Optional[str] = None,
-            admin_cluster_id: Optional[str] = None,
             api_key: Optional[str] = None
         ) -> bool:
-            # Determine which cluster ID to use
-            # Path parameters like /clusters/{admin_cluster_id} or /instance/{cluster_id}
-            # will be automatically injected
-            effective_cluster_id = cluster_id or admin_cluster_id
-            effective_cluster_id = validate_cluster_id(effective_cluster_id)
-            
-            # If api_key is not provided, try to get it from the provider
-            if api_key is None:
-                api_key = await self.get_api_key()
-            
-            return self.authenticate(effective_cluster_id, api_key or "")
+            # Path parameters like /instance/{cluster_id} will be automatically injected
+            if cluster_id:
+                effective_cluster_id = validate_cluster_id(cluster_id)
+                
+                # If api_key is not provided, try to get it from the provider
+                if api_key is None:
+                    api_key = await self.get_api_key()
+                
+                return self.authenticate(effective_cluster_id, api_key or "")
+            else:
+                # For endpoints without a cluster_id parameter (like /clusters)
+                # Just verify that a valid API key was provided
+                if api_key is None:
+                    api_key = await self.get_api_key()
+                
+                # We need to check if the API key belongs to any valid cluster
+                for cid, key in self.cluster_keys.items():
+                    if key == (api_key or ""):
+                        return True
+                        
+                # If we get here, no matching key was found
+                logger.warning("Invalid API key provided for authentication")
+                raise HTTPException(
+                    status_code=403,
+                    detail="Invalid cluster key",
+                    headers={"WWW-Authenticate": "ApiKey"},
+                )
         
         return authenticate_cluster
