@@ -1,0 +1,122 @@
+Metadata-Version: 2.4
+Name: comfyui-cluster-stun
+Version: 0.1.0
+Summary: STUN server for ComfyUI Cluster instance registration
+Author-email: nomcycle <sean@taostensor.llc>
+License: MIT
+Requires-Python: >=3.13
+Description-Content-Type: text/markdown
+Requires-Dist: fastapi
+Requires-Dist: uvicorn
+Requires-Dist: pydantic
+Provides-Extra: dev
+Requires-Dist: pytest; extra == "dev"
+Requires-Dist: aiohttp; extra == "dev"
+Requires-Dist: httpx; extra == "dev"
+Requires-Dist: pytest-cov; extra == "dev"
+Requires-Dist: pytest-asyncio; extra == "dev"
+Requires-Dist: mypy; extra == "dev"
+Requires-Dist: ruff; extra == "dev"
+
+# ComfyUI Cluster STUN Server
+
+A STUN (Signaling and Tracking Usage for Networks) server for ComfyUI Cluster instances. This server provides a central registration point for ComfyUI Cluster instances to discover and communicate with each other.
+
+## Features
+
+- Secure instance registration with API key authentication
+- Cluster-based organization of instances
+- Instance heartbeat tracking
+- Automatic cleanup of stale instances
+- Extensible architecture with dependency injection
+- Fast and efficient with fail-fast design principles
+
+## Architecture
+
+The STUN server follows SOLID principles and uses a clean, modular architecture:
+
+- **Single Responsibility**: Each module has a single responsibility
+- **Open/Closed**: The system is open for extension but closed for modification
+- **Liskov Substitution**: Interface implementations are substitutable
+- **Interface Segregation**: Clients are not forced to depend on interfaces they don't use
+- **Dependency Inversion**: High-level modules are not dependent on low-level modules
+
+## Installation
+
+### Using uv (recommended)
+
+[uv](https://github.com/astral-sh/uv) provides fast dependency resolution and installation for Python packages.
+
+```bash
+# Install uv if you don't have it
+curl -sSf https://astral.sh/uv/install.sh | bash
+
+# Install the STUN server
+cd /path/to/ComfyUI_Cluster/stun
+uv install --no-dev
+```
+
+### Using pip
+
+```bash
+cd /path/to/ComfyUI_Cluster/stun
+pip install -e .
+```
+
+## Configuration
+
+The STUN server is configured using environment variables:
+
+- `COMFY_CLUSTER_STUN_HOST`: Host to listen on (default: 0.0.0.0)
+- `COMFY_CLUSTER_STUN_PORT`: Port to listen on (default: 8089)
+- `COMFY_CLUSTER_STUN_LOG_LEVEL`: Logging level (default: INFO)
+- `COMFY_CLUSTER_AUTH_KEYS`: Comma-separated list of cluster:key pairs
+- `COMFY_CLUSTER_DEFAULT_KEY`: Default key for the 'default' cluster
+
+Example:
+
+```bash
+COMFY_CLUSTER_AUTH_KEYS="cluster1:secretkey1,cluster2:secretkey2" python -m src.server
+```
+
+## Running the Server
+
+```bash
+# Run directly
+python -m src.server
+
+# Or use the installed script
+stun-server
+
+# With command line options
+stun-server --host 127.0.0.1 --port 8000 --log-level DEBUG
+```
+
+## API Endpoints
+
+- `POST /register-instance`: Register an instance
+- `GET /instances/{cluster_id}`: Get all instances for a cluster
+- `POST /heartbeat/{cluster_id}/{instance_id}`: Update heartbeat for an instance
+- `GET /clusters/{admin_cluster_id}`: Get all registered clusters
+- `DELETE /instance/{cluster_id}/{instance_id}`: Manually remove an instance
+- `GET /health`: Health check endpoint (no authentication required)
+
+## Development
+
+### Setting up the development environment
+
+```bash
+# Install development dependencies
+uv install --dev
+
+# Run tests
+pytest
+
+# Run linters
+ruff check .
+mypy .
+```
+
+## License
+
+MIT

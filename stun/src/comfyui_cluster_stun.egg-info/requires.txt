@@ -1,0 +1,12 @@
+fastapi
+uvicorn
+pydantic
+
+[dev]
+pytest
+aiohttp
+httpx
+pytest-cov
+pytest-asyncio
+mypy
+ruff

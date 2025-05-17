@@ -1,0 +1,133 @@
+#!/usr/bin/env python3
+"""
+ComfyUI Cluster STUN Server - Configuration Module
+
+This module handles configuration loading and validation with fail-fast principles.
+"""
+
+import logging
+import os
+from dataclasses import dataclass
+from typing import Dict, Optional
+
+from .exceptions import ConfigurationError
+
+logger = logging.getLogger("comfyui-cluster-stun.config")
+
+@dataclass
+class ServerConfig:
+    host: str
+    port: int
+    log_level: str
+    cluster_keys: Dict[str, str]
+    
+    def __post_init__(self):
+        if not self.host:
+            msg = "Host cannot be empty"
+            logger.error(msg)
+            raise ConfigurationError(msg)
+            
+        if not isinstance(self.port, int) or self.port < 1 or self.port > 65535:
+            msg = f"Invalid port number: {self.port}"
+            logger.error(msg)
+            raise ConfigurationError(msg)
+            
+        if not self.log_level:
+            msg = "Log level cannot be empty"
+            logger.error(msg)
+            raise ConfigurationError(msg)
+            
+        if not self.cluster_keys:
+            logger.warning("No cluster keys configured. This is highly insecure!")
+            
+def load_cluster_keys() -> Dict[str, str]:
+    """
+    Load predefined cluster keys from environment variables.
+    Follows fail-fast principles by validating early and failing explicitly.
+    
+    Returns:
+        Dict mapping cluster IDs to their authentication keys
+        
+    Raises:
+        ConfigurationError: If the configuration is invalid
+    """
+    cluster_keys = {}
+    auth_keys_env = os.getenv("COMFY_CLUSTER_AUTH_KEYS", "")
+    
+    if not auth_keys_env:
+        logger.warning("No predefined cluster keys found. Set COMFY_CLUSTER_AUTH_KEYS for better security.")
+        # For backward compatibility, use default cluster with default key
+        default_key = os.getenv("COMFY_CLUSTER_DEFAULT_KEY", "default_key_CHANGE_ME")
+        if default_key == "default_key_CHANGE_ME":
+            logger.warning("Using insecure default cluster key. CHANGE THIS IN PRODUCTION!")
+        cluster_keys["default"] = default_key
+        return cluster_keys
+    
+    # Parse the environment variable with strict validation
+    key_pairs = auth_keys_env.split(",")
+    for pair in key_pairs:
+        if ":" not in pair:
+            msg = f"Invalid key pair format: {pair}"
+            logger.error(msg)
+            raise ConfigurationError(msg)
+            
+        cluster_id, key = pair.split(":", 1)
+        cluster_id = cluster_id.strip()
+        key = key.strip()
+        
+        if not cluster_id:
+            msg = "Empty cluster ID found in configuration"
+            logger.error(msg)
+            raise ConfigurationError(msg)
+            
+        if len(key) < 8:
+            msg = f"Cluster key for '{cluster_id}' is too short (<8 chars)"
+            logger.error(msg)
+            raise ConfigurationError(msg)
+            
+        cluster_keys[cluster_id] = key
+        # Log only part of the key for security
+        masked_key = key[:3] + "*" * (len(key) - 6) + key[-3:]
+        logger.info(f"Loaded auth key for cluster: {cluster_id} ({masked_key})")
+    
+    return cluster_keys
+
+def get_config_from_env(args: Optional[dict] = None) -> ServerConfig:
+    """
+    Create configuration from environment variables and command line arguments.
+    Command line arguments take precedence over environment variables.
+    
+    Args:
+        args: Optional dictionary of command line arguments
+        
+    Returns:
+        ServerConfig object with validated configuration
+        
+    Raises:
+        ConfigurationError: If the configuration is invalid
+    """
+    args = args or {}
+    
+    # Get values with precedence: args > env > default
+    host = args.get("host") or os.getenv("COMFY_CLUSTER_STUN_HOST", "0.0.0.0")
+    
+    # Port needs to be an integer
+    port_str = args.get("port") or os.getenv("COMFY_CLUSTER_STUN_PORT", "8089")
+    try:
+        port = int(port_str)
+    except ValueError:
+        msg = f"Invalid port number: {port_str}"
+        logger.error(msg)
+        raise ConfigurationError(msg)
+    
+    log_level = args.get("log_level") or os.getenv("COMFY_CLUSTER_STUN_LOG_LEVEL", "INFO")
+    
+    # Load and validate cluster keys
+    cluster_keys = load_cluster_keys()
+    
+    return ServerConfig(
+        host=host,
+        port=port,
+        log_level=log_level,
+        cluster_keys=cluster_keys
+    )

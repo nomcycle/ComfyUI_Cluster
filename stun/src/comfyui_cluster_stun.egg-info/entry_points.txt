@@ -1,0 +1,2 @@
+[console_scripts]
+stun-server = src.server:main
