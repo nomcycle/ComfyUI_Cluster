@@ -1,0 +1,18 @@
+{
+	# Global options
+	admin off
+	auto_https off
+}
+
+:443 {
+	# Serve self-signed certificates
+	tls /etc/caddy/certs/cert.pem /etc/caddy/certs/key.pem
+
+	# Reverse proxy to STUN server
+	reverse_proxy localhost:8089 {
+		health_uri /health
+		health_interval 30s
+		health_timeout 5s
+		health_status 200
+	}
+}
