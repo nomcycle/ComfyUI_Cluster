@@ -112,8 +112,8 @@ class ThisInstance(Instance):
             logger.info("Hot reload enabled, sending signal")
             self._handle_hot_reload_initialization()
         else:
-            logger.info("Starting instance announcement")
-            self._start_instance_announcement()
+            logger.info("Starting instance initialization")
+            asyncio.create_task(self._start_instance_initialization())
             
     def _check_for_hot_reload(self) -> None:
         """Check if hot reload is enabled and handle it.
@@ -124,39 +124,38 @@ class ThisInstance(Instance):
     def _handle_hot_reload_initialization(self) -> None:
         """Initialize the hot reload process."""
         # Implementation will be added in the hot reload refactoring
-        # For now, just start the normal announcement process
-        self._start_instance_announcement()
+        # For now, just start the normal initialization process
+        asyncio.create_task(self._start_instance_initialization())
     
-    def _start_instance_announcement(self) -> None:
-        """Start the instance announcement process."""
-        if not EnvVars.get_udp_broadcast():
-            # If UDP broadcast is disabled, use the configured hosts
-            self._handle_configured_hosts()
-        else:
-            # Otherwise announce this instance to the cluster
+    async def _start_instance_initialization(self) -> None:
+        """
+        Start the instance initialization process using the selected strategy.
+        
+        This method uses the registration strategy from the cluster to discover
+        other instances and complete initialization.
+        """
+        registration_mode = EnvVars.get_registration_mode()
+        logger.info(f"Starting instance initialization with {registration_mode} registration mode")
+        
+        # Using the cluster's discovery method to find other instances
+        discovery_successful = await self.cluster.discover_instances()
+        
+        # If using UDP broadcast, also send announcements to help with discovery
+        if registration_mode == "broadcast":
             self._send_announce()
-    
-    def _handle_configured_hosts(self) -> None:
-        """Handle pre-configured hosts when UDP broadcast is disabled."""
-        from .udp.udp_base import UDPSingleton
         
-        # Get addresses from UDPSingleton directly
-        for instance_id, instance_addr, direct_port in UDPSingleton.get_cluster_instance_addresses():
-            # Skip this instance
-            if instance_id == EnvVars.get_instance_index():
-                continue
-                
-            # Register the instance
-            self._register_instance(
-                ClusterRole.LEADER if instance_id == 0 else ClusterRole.FOLLOWER,
-                instance_id,
-                instance_addr,
-                direct_port,
-                True
-            )
-        
-        # Mark initialization as complete
-        self._complete_initialization()
+        # Check if all instances were found immediately
+        if discovery_successful and self.cluster.all_accounted_for():
+            self._complete_initialization()
+        else:
+            # If not all instances were found, wait for announcements or retry discovery
+            if registration_mode == "broadcast":
+                logger.info("Not all instances found, waiting for announcements")
+            else:
+                logger.warning(f"Not all instances found with {registration_mode} strategy")
+                logger.info("Will retry discovery in 5 seconds")
+                await asyncio.sleep(5)
+                asyncio.create_task(self._start_instance_initialization())
     
     def _send_announce(self) -> None:
         """Send an announcement message to the cluster."""
@@ -168,13 +167,15 @@ class ThisInstance(Instance):
         announce.all_accounted_for = all_accounted_for
         announce.direct_listening_port = EnvVars.get_direct_listen_port()
 
+        # Use instance_address in log message
         logger.info(
-            "Announcing instance '%s' (role=%s, all_accounted_for=%s, known_instances=%d/%d)",
+            "Announcing instance '%s' (role=%s, all_accounted_for=%s, known_instances=%d/%d, address=%s)",
             EnvVars.get_instance_index(),
             self.role,
             all_accounted_for,
             len(self.cluster.instances),
-            self.cluster.instance_count - 1
+            self.cluster.instance_count - 1,
+            EnvVars.get_instance_address()  # Log the instance address
         )
         self.cluster.udp_message_handler.send_no_wait(announce)
     
@@ -221,6 +222,7 @@ class ThisInstance(Instance):
             
         logger.info("Initialization complete - all instances connected")
         self._initialization_complete = True
+        self.cluster.mark_registration_complete()
         
         # Make sure the UDP system has all instance addresses
         from .udp.udp_base import UDPSingleton
@@ -231,7 +233,7 @@ class ThisInstance(Instance):
         # Add this instance
         addresses.append(
             (EnvVars.get_instance_index(), 
-             EnvVars.get_listen_address(), 
+             EnvVars.get_instance_address(),  # Use instance_address instead of listen_address
              EnvVars.get_direct_listen_port())
         )
         
@@ -338,7 +340,7 @@ class ThisInstance(Instance):
         # Add this instance first
         addresses.append(
             (EnvVars.get_instance_index(), 
-             EnvVars.get_listen_address(), 
+             EnvVars.get_instance_address(),  # Use instance_address instead of listen_address
              EnvVars.get_direct_listen_port())
         )
         
@@ -419,7 +421,7 @@ class ThisInstance(Instance):
         # Skip state handling during initialization
         if not self._initialization_complete:
             # If using UDP broadcast, send announcements periodically
-            if EnvVars.get_udp_broadcast():
+            if EnvVars.get_registration_mode() == "broadcast":
                 # Check if we need to keep announcing
                 if self.cluster.all_accounted_for():
                     # We found all other instances, but they may not have found us yet
@@ -441,6 +443,8 @@ class ThisInstance(Instance):
                     
                 # Rate limit announcements
                 await asyncio.sleep(2)
+            
+            # For other registration modes, we rely on the cluster's discover_instances method
             return
             
         # Delegate to sync handler if available
