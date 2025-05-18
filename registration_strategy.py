@@ -71,7 +71,7 @@ class STUNRegistrationStrategy(IRegistrationStrategy):
                 registration_data = {
                     "address": self._instance_address,  # Use instance address instead of listen address
                     "direct_listen_port": self._port,
-                    "role": self._role,
+                    "role": self._role.lower(),
                     "instance_id": self._instance_id,
                     "cluster_id": self._cluster_id,
                     "cluster_key": self._cluster_key
@@ -83,7 +83,8 @@ class STUNRegistrationStrategy(IRegistrationStrategy):
                 async with session.post(
                     f"{self._stun_url}/register-instance",
                     json=registration_data,
-                    timeout=10  # 10 seconds timeout
+                    timeout=10,  # 10 seconds timeout
+                    verify_ssl=False  # Disable SSL verification
                 ) as response:
                     if response.status == 401 or response.status == 403:
                         error_text = await response.text()
@@ -123,7 +124,8 @@ class STUNRegistrationStrategy(IRegistrationStrategy):
                 async with session.get(
                     f"{self._stun_url}/instances/{self._cluster_id}",
                     headers=headers,
-                    timeout=10  # 10 seconds timeout
+                    timeout=10,  # 10 seconds timeout
+                    verify_ssl=False  # Disable SSL verification
                 ) as response:
                     if response.status == 401 or response.status == 403:
                         error_text = await response.text()

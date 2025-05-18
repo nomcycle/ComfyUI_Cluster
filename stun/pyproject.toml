@@ -9,9 +9,10 @@ requires-python = ">=3.12"
 readme = "README.md"
 license = {text = "MIT"}
 dependencies = [
-    "fastapi",  # HTTP API framework
-    "uvicorn",   # ASGI server
-    "pydantic",   # Data validation and serialization
+    "fastapi", # HTTP API framework
+    "uvicorn", # ASGI server
+    "pydantic", # Data validation and serialization
+    "dotenv>=0.9.9",
 ]
 
 [project.optional-dependencies]

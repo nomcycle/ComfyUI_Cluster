@@ -10,3 +10,4 @@ __pycache__
 build
 caddy/certs
 comfyui_cluster_sun.egg-info
+.env

@@ -132,7 +132,8 @@ def create_router(
     ) -> RegistrationResponse:
         """Register an instance with the STUN server."""
         # Handle authentication separately for this endpoint since we have credentials in the body
-        auth_provider.authenticate(registration.cluster_id, registration.cluster_key)
+        if not auth_provider.authenticate(registration.cluster_id, registration.cluster_key):
+            raise AuthenticationError("Invalid cluster ID or key")
         
         # Register instance directly
         response = cluster_registry.register_instance(

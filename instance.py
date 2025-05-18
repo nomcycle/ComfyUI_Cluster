@@ -113,7 +113,7 @@ class ThisInstance(Instance):
             self._handle_hot_reload_initialization()
         else:
             logger.info("Starting instance initialization")
-            asyncio.create_task(self._start_instance_initialization())
+            asyncio.get_event_loop().create_task(self._start_instance_initialization())
             
     def _check_for_hot_reload(self) -> None:
         """Check if hot reload is enabled and handle it.

@@ -9,8 +9,9 @@ Implements strict fail-fast authentication with no recovery paths.
 import logging
 from typing import Dict, Optional, Callable, Protocol, runtime_checkable
 
-from fastapi import HTTPException, Security, Depends
+from fastapi import HTTPException, Security, Depends, Request
 from fastapi.security import APIKeyHeader
+from fastapi.security.api_key import APIKey
 
 from .exceptions import ConfigurationError, AuthenticationError
 
@@ -24,7 +25,9 @@ class APIKeyProvider(Protocol):
     """Protocol for API key providers."""
     
     async def __call__(self) -> Optional[str]:
-        """Get the API key."""
+        """
+        Get the API key.
+        """
         ...
 
 class HeaderAPIKeyProvider:
@@ -46,6 +49,7 @@ class HeaderAPIKeyProvider:
         Returns:
             The API key or None if not provided
         """
+        # The APIKeyHeader dependency will receive the request from FastAPI's context
         return await self.api_key_header()
 
 def validate_cluster_id(cluster_id: Optional[str]) -> str:
@@ -206,25 +210,21 @@ class KeyBasedAuthProvider:
         Returns:
             A callable that can be used with FastAPI's Depends
         """
+        # Create a proper FastAPI dependency for the API key
+        api_key_dependency = self.api_key_provider.api_key_header
+        
+        # Define the actual dependency function
         async def authenticate_cluster(
             cluster_id: Optional[str] = None,
-            api_key: Optional[str] = None
+            api_key: Optional[str] = Depends(api_key_dependency)
         ) -> bool:
             # Path parameters like /instance/{cluster_id} will be automatically injected
             if cluster_id:
                 effective_cluster_id = validate_cluster_id(cluster_id)
-                
-                # If api_key is not provided, try to get it from the provider
-                if api_key is None:
-                    api_key = await self.get_api_key()
-                
                 return self.authenticate(effective_cluster_id, api_key or "")
             else:
                 # For endpoints without a cluster_id parameter (like /clusters)
                 # Just verify that a valid API key was provided
-                if api_key is None:
-                    api_key = await self.get_api_key()
-                
                 # We need to check if the API key belongs to any valid cluster
                 for cid, key in self.cluster_keys.items():
                     if key == (api_key or ""):
