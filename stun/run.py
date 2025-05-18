@@ -8,7 +8,12 @@ It handles command line arguments and sets up the environment.
 
 import sys
 
+import os
+from dotenv import load_dotenv
 from src.server import main
+
+# Load environment variables from .env file
+load_dotenv()
 
 if __name__ == "__main__":
     sys.exit(main())

@@ -16,6 +16,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+    "dotenv",
     "pytest",
     "aiohttp",
     "httpx",

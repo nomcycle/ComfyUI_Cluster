@@ -77,14 +77,10 @@ def load_cluster_keys(env_reader: Optional[EnvReader] = None) -> Dict[str, str]:
     auth_keys_env = env_reader.get("COMFY_CLUSTER_AUTH_KEYS", "")
     
     if not auth_keys_env:
-        logger.warning("No predefined cluster keys found. Set COMFY_CLUSTER_AUTH_KEYS for better security.")
-        # For backward compatibility, use default cluster with default key
-        default_key = env_reader.get("COMFY_CLUSTER_DEFAULT_KEY", "default_key_CHANGE_ME")
-        if default_key == "default_key_CHANGE_ME":
-            logger.warning("Using insecure default cluster key. CHANGE THIS IN PRODUCTION!")
-        cluster_keys["default"] = default_key
-        return cluster_keys
-    
+        msg = "No cluster keys configured!"
+        logger.error(msg)
+        raise ConfigurationError(msg)
+
     # Parse the environment variable with strict validation
     key_pairs = auth_keys_env.split(",")
     for pair in key_pairs:

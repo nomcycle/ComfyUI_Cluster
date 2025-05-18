@@ -3,6 +3,7 @@ uvicorn
 pydantic
 
 [dev]
+dotenv
 pytest
 aiohttp
 httpx

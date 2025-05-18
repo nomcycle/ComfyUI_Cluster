@@ -8,8 +8,18 @@
 	# Serve self-signed certificates
 	tls /etc/caddy/certs/cert.pem /etc/caddy/certs/key.pem
 
+	# Whitelist specific endpoints
+	@whitelist {
+		path /register-instance
+		path /instances/*
+		path /heartbeat/*/*
+		path /clusters
+		path /instance/*/*
+		path /health
+	}
+
 	# Reverse proxy to STUN server
-	reverse_proxy localhost:8089 {
+	reverse_proxy @whitelist localhost:8089 {
 		health_uri /health
 		health_interval 10s
 		health_timeout 5s

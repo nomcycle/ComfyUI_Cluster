@@ -50,8 +50,7 @@ The STUN server is configured using environment variables:
 - `COMFY_CLUSTER_STUN_HOST`: Host to listen on (default: 0.0.0.0)
 - `COMFY_CLUSTER_STUN_PORT`: Port to listen on (default: 8089)
 - `COMFY_CLUSTER_STUN_LOG_LEVEL`: Logging level (default: INFO)
-- `COMFY_CLUSTER_AUTH_KEYS`: Comma-separated list of cluster:key pairs
-- `COMFY_CLUSTER_DEFAULT_KEY`: Default key for the 'default' cluster
+- `COMFY_CLUSTER_AUTH_KEYS`: Comma-separated list of cluster:key pairs (required)
 
 Example:
 
@@ -80,6 +79,73 @@ stun-server --host 127.0.0.1 --port 8000 --log-level DEBUG
 - `GET /clusters`: Get all registered clusters
 - `DELETE /instance/{cluster_id}/{instance_id}`: Manually remove an instance
 - `GET /health`: Health check endpoint (no authentication required)
+
+## Authentication
+
+The STUN server uses a secure request signing mechanism for authentication:
+
+1. Each cluster has a shared secret key configured on the server
+2. When making requests, clients must include the following headers:
+   - `X-Cluster-ID`: The ID of the cluster (for requests without cluster_id in path)
+   - `X-Timestamp`: Current Unix timestamp (seconds since epoch)
+   - `X-Signature`: HMAC-SHA256 signature of `{request_path}:{timestamp}:{request_body}`
+
+Example client-side authentication code:
+
+```python
+import hmac
+import hashlib
+import time
+import requests
+import json
+
+def create_signature(request_path, request_body, timestamp, api_key):
+    string_to_sign = f"{request_path}:{timestamp}:{request_body}"
+    signature = hmac.new(
+        api_key.encode('utf-8'),
+        string_to_sign.encode('utf-8'),
+        hashlib.sha256
+    ).hexdigest()
+    return signature
+
+def make_authenticated_request(url, cluster_id, api_key, method="GET", data=None):
+    # Create timestamp
+    timestamp = str(int(time.time()))
+    
+    # Prepare request path and body
+    url_parts = url.split("/", 3)
+    request_path = "/" + url_parts[3] if len(url_parts) > 3 else "/"
+    request_body = ""
+    
+    if data and method in ["POST", "PUT", "PATCH"]:
+        request_body = json.dumps(data)
+    
+    # Create signature
+    signature = create_signature(request_path, request_body, timestamp, api_key)
+    
+    # Prepare headers
+    headers = {
+        "X-Cluster-ID": cluster_id,
+        "X-Timestamp": timestamp,
+        "X-Signature": signature,
+        "Content-Type": "application/json"
+    }
+    
+    # Make request
+    if method == "GET":
+        return requests.get(url, headers=headers)
+    elif method == "POST":
+        return requests.post(url, headers=headers, json=data)
+    elif method == "DELETE":
+        return requests.delete(url, headers=headers)
+    else:
+        raise ValueError(f"Unsupported method: {method}")
+```
+
+Security features:
+- Signatures expire after 5 minutes to prevent replay attacks
+- Server uses constant-time comparison to prevent timing attacks
+- API keys are never transmitted over the network
 
 ## Development
 
