@@ -4,9 +4,9 @@ ComfyUI Cluster - Distributed tensor processing across multiple ComfyUI instance
 from aiohttp import web
 from server import PromptServer
 
-from .instance_loop import get_instance_loop
-from .log import logger
-from .nodes import NODE_CLASS_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS
+from .src.instance_loop import get_instance_loop
+from .src.log import logger
+from .src.nodes import NODE_CLASS_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS
 
 @PromptServer.instance.routes.post("/cluster/queue")
 async def queue(request):

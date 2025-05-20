@@ -37,7 +37,7 @@ for proto_file in ./protobuf/src/*.proto; do
         echo "Compiling $proto_file"
         "${PROTOC_DIR}/bin/protoc" \
             --proto_path=./protobuf/src \
-            --python_out=./protobuf \
+            --python_out=./src/protobuf \
             "$proto_file"
     fi
 done
