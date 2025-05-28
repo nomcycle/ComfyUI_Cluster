@@ -133,7 +133,7 @@ class EnvVars:
         if os.getenv("RUNPOD_POD_ID"):
             # Log that we're using RunPod environment
             # Check if RUNPOD_POD_ID environment variable exists
-            instance_address = f"{os.getenv('RUNPOD_POD_ID')}.runpod.internal"
+            instance_address = socket.gethostbyname(f"{os.getenv('RUNPOD_POD_ID')}.runpod.internal")
             logger.info(f"RUNPOD environment detected, using runpod internal address: {instance_address}")
 
         # If instance address is not set, default to listen address (except for 0.0.0.0)
