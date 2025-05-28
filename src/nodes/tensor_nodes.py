@@ -150,9 +150,9 @@ class ClusterFanInBase(ClusterTensorNodeBase, ClusterNodePair):
 @declare_subgraph_start_node('tensor_fan')
 class ClusterFanOutBase(ClusterTensorNodeBase, ClusterNodePair):
 
-    @classmethod
-    def IS_CHANGED(s, image):
-        return float('nan')
+    # @classmethod
+    # def IS_CHANGED(s, image):
+    #     return float('nan')
 
     async def _sync_operation(self, instance, unique_id, input):
         if EnvVars.get_instance_index() == 0:

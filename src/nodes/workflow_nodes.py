@@ -122,9 +122,9 @@ class ClusterStartSubgraph(ClusterSubgraph, ClusterNodePair):
     FUNCTION = "execute"
     CATEGORY = "Cluster"
 
-    @classmethod
-    def IS_CHANGED(s, image):
-        return float('nan')
+    # @classmethod
+    # def IS_CHANGED(s, image):
+    #     return float('nan')
 
     def execute(self, unique_id: str, image: tuple, subgraph_id: str) -> torch.tensor:
         return (image,)
